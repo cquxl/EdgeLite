@@ -1,0 +1,1 @@
+from .ptq_quant import YOLOv8PosePTQ
