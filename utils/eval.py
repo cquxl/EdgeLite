@@ -2,6 +2,7 @@
 import torch
 from ultralytics import YOLO
 from loguru import logger
+import os
 
 
 
@@ -9,6 +10,7 @@ def eval_engine(args, engine_path, eval_data_yaml):
     # 显式绑定设备
     result = {}
     args.logger.info(args)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     model = YOLO(engine_path, task=args.task)
     args.logger.info(model)
     rect = False if args.dynamic else True

@@ -28,6 +28,7 @@ class YOLOv8PoseQuant:
             self.logger.info("QAT quantization start and finetune")
             self.Quant.qat_finetune()
             self.Quant.build_engine()
+            pass
 
         else:
             raise NotImplementedError

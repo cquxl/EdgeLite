@@ -46,6 +46,7 @@ def main():
         if args.quant == 'ptq' and args.export != 'yolo':
             args.logger.info(f"you should eval in another script or only eval for existed engine (no quant), quant and eval at the same time is not supported")
             sys.exit(1)
+
         result = eval_engine(args, args.engine_path, data_yaml_file) # dict
         log = {
             "engine": args.engine_path,
@@ -55,6 +56,7 @@ def main():
         with open(save_path, "w", encoding="utf-8") as f:
             json.dump(log, f, indent=4, ensure_ascii=False)
         args.logger.info(f"✅ saving result to {save_path}")
+        sys.exit(1)
 
 
 

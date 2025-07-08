@@ -2,7 +2,7 @@
 
 # EdgeLite
 
-轻量级 YOLOv8 模型压缩与部署工具，支持 TensorRT 推理、INT8 后训练量化（PTQ）、自定义校准器、动态 batch 推理和精度评估等功能，旨在帮助模型在边缘设备上高效运行。
+轻量级 YOLOv8 模型压缩与部署工具，支持 TensorRT 推理、INT8 后训练量化（PTQ）、INT8量化感知训练（训练中量化QAT）、结构化剪枝（Prune）、自定义校准器、动态 batch 推理和精度评估等功能，旨在帮助模型在边缘设备上高效运行。
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## ✨ 特性
 
-- ✅ 支持将 YOLOv8 模型导出为 ONNX 与 TensorRT `.engine`
+- ✅ 支持结构化剪枝（filter/channel剪枝）、iNT8后训练量化PTQ与训练中量化QAT以及TRT推理
 - 📦 集成 FP32 / FP16 / INT8 多精度推理模式
 - 🎯 自定义 INT8 量化校准器（支持单张图像或 batch 模式）
 - ⚙️ 支持动态输入尺寸（Dynamic Shape）与 batch size 优化
