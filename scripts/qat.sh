@@ -1,0 +1,12 @@
+CUDA_VISIBLE_DEVICES=0 python main_quant.py \
+    --weight weights/yolov8s-pose.pt \
+    --train_img_path datasets/coco-pose/images/train2017 \
+    --val_img_path datasets/coco-pose/images/val2017 \
+    --onnx_path weights/yolov8s-pose-qat.onnx \
+    --engine_path weights/yolov8s-pose-qat.engine \
+    --epochs 30 \
+    --output_dir output/yolov8s-pose-qat \
+    --save_qat weights/yolov8s-pose-qat.pt \
+    --quant qat \
+    --batch_size 16 \
+    --eval
