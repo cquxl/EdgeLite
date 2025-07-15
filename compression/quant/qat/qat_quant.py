@@ -238,7 +238,7 @@ class YOLOv8PoseQAT:
                     self.logger.info("build engine failed!")
                     return False
             else:
-                self.logger.info(f"engine exists: {self.engine_path}, pleas eval on coco-pose")
+                self.logger.info(f"engine exists: {self.engine_path}, please eval on coco-pose")
                 return True
         except Exception as e:
             self.logger.info("build engine failed!", e)

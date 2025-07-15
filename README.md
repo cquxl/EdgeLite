@@ -75,6 +75,8 @@ pip install -r requirements.txt
 
 下载链接：见ultralytics/cfg/datasets/coco-pose.yaml
 
+3. 我们提供了压缩后的模型以及trt engine，见Google Drive的[l40_save_weights.rar](https://drive.google.com/file/d/1bjWxoecJdCdFz1klLuXzWNymIbxIQWXr/view)
+
 ```
 download: |
   from pathlib import Path
