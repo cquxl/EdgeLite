@@ -119,10 +119,11 @@ class YOLOv8PoseQAT:
         replace_bottleneck_forward(self.model)
         # other module Q/DQ forward, like Conv2d
         replace_to_quantization_module(self.model, ignore_policy=self.args.ignore_policy)
-
-        # self.logger.info("Apply custom_rules ....")
-        # apply_custom_rules_to_quantizer(self.model, my_export_onnx)
-
+        try:
+            self.logger.info("Apply custom_rules ....")
+            apply_custom_rules_to_quantizer(self.model, my_export_onnx)
+        except:
+            pass
         self.logger.info("Calibrate model ....")
         calibrate_model(self.model, self.train_dataloader, self.device)
 
