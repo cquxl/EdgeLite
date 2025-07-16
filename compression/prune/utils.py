@@ -29,8 +29,10 @@ from ultralytics.models.yolo.segment import SegmentationTrainer
 from ultralytics.models.yolo.classify import ClassificationTrainer
 
 import os
-import d2l.torch as d2l
-d2l.use_svg_display()
+# import d2l.torch as d2l
+# d2l.use_svg_display()
+from matplotlib_inline import backend_inline
+backend_inline.set_matplotlib_formats('svg')
 
 TASK_MAP = {
     "detect": (YOLO, DetectionTrainer),
