@@ -113,11 +113,13 @@ def print_quantizer(module):
 
 # Initialize PyTorch Quantization
 def initialize(all_node_with_qdq=False):
-    quant_desc_input = QuantDescriptor(calib_method="histogram")
+    quant_desc_input = QuantDescriptor(num_bits=8, calib_method="histogram")
+    # quant_desc_input = QuantDescriptor(calib_method="histogram")
     quant_nn.QuantConv2d.set_default_quant_desc_input(quant_desc_input)
     quant_nn.QuantMaxPool2d.set_default_quant_desc_input(quant_desc_input)
     quant_nn.QuantLinear.set_default_quant_desc_input(quant_desc_input)
     quant_logging.set_verbosity(quant_logging.ERROR)
+    os.environ["PTQ_MAX_AMAX"] = "100.0" # T4 add
 
     if all_node_with_qdq:
         quant_modules._DEFAULT_QUANT_MAP.extend(
@@ -209,6 +211,9 @@ def replace_to_quantization_module(model: torch.nn.Module, ignore_policy: Union[
 
                 module._modules[name] = transfer_torch_to_quantization(submodule, module_dict[submodule_id],
                                                                        all_node_with_qdq)
+            if isinstance(submodule, torch.nn.SiLU) and "c2" in path:  # 例如，检测头中的SiLU
+                print(f"对 {path} 使用更保守的量化")
+                module._modules[name] = QuantSiLU(conservative=True)  # 自定义更稳定的QuantSiLU
 
     recursive_and_replace_module(model)
 
@@ -372,10 +377,13 @@ def finetune(
                 origin_outputs.clear()
 
             if fp16:
+                # add
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
                 scaler.scale(quant_loss).backward()
                 scaler.step(optimizer)
                 scaler.update()
             else:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
                 quant_loss.backward()
                 optimizer.step()
             optimizer.zero_grad()
