@@ -144,6 +144,10 @@ def export_engine(
         # max_shape = (*shape[:2], *(int(max(2, workspace or 2) * d) for d in shape[2:]))  # max input shape
         max_shape = (*shape[:2], *(int(max(2, workspace0 or 2) * int(d)) for d in shape[2:]))  # max input shape
         opt_shape = tuple(int(s) for s in shape)
+        if trt.__version__ == "8.2.5.1": # t4
+            min_shape = (1, *shape[1:])  # minimum input shape
+            max_shape = (shape[0], *shape[1:])
+            opt_shape = tuple(int(s) for s in shape)
 
         for inp in inputs:
             # profile.set_shape(inp.name, min=min_shape, opt=shape, max=max_shape)

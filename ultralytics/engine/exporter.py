@@ -585,6 +585,9 @@ class Exporter:
         dynamic = self.args.dynamic
         if dynamic:
             dynamic = {"images": {0: "batch", 2: "height", 3: "width"}}  # shape(1,3,640,640)
+            import tensorrt as trt
+            if trt.__version__ == "8.2.5.1": # t4
+                dynamic = {"images": {0: "batch"}} # shape(1,3,640,640)->fix shape
             # dynamic = {"images": {0: "batch"}} # shape(1,3,640,640)->fix shape
             if isinstance(self.model, SegmentationModel):
                 dynamic["output0"] = {0: "batch", 2: "anchors"}  # shape(1, 116, 8400)
@@ -905,7 +908,31 @@ class Exporter:
         """Export YOLO model to TensorRT format https://developer.nvidia.com/tensorrt."""
         assert self.im.device.type != "cpu", "export running on CPU but must be on GPU, i.e. use 'device=0'"
         f_onnx, _ = self.export_onnx()  # run before TRT import https://github.com/ultralytics/ultralytics/issues/7016
-
+        import tensorrt as trt
+        if trt.__version__ == "8.2.5.1": # t4
+            def fix_onnx(org_onnx_path, sim_onnx_path, fix_onnx_path):
+                """
+                :param org_onnx_path: yolo.onnx
+                :param sim_onnx_path: yolo-sim.onnx
+                :param fix_onnx_path: yolo-fix.onnx
+                :return:
+                """
+                import onnx
+                os.system(f"python -m onnxsim {org_onnx_path} {sim_onnx_path} --dynamic-input-shape") # simplify
+                model = onnx.load(sim_onnx_path)
+                for node in model.graph.node:
+                    if node.op_type == 'Resize':
+                        for attr in node.attribute:
+                            if attr.name == "model":
+                                attr.s = b"nearest"
+                onnx.save(model, fix_onnx_path)
+            base_name = f_onnx.split(".")[0]
+            f_slim = base_name + "-slim.onnx"
+            f_fix = base_name + "-fix.onnx"
+            LOGGER.info(f"fix onnx {f_onnx} to {f_fix}")
+            fix_onnx(f_onnx, f_slim, f_fix)
+            if os.path.exists(f_fix):
+                os.rename(f_fix, f_onnx)
         try:
             import tensorrt as trt  # noqa
         except ImportError:
