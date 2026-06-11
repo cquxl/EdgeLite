@@ -1,0 +1,57 @@
+{
+  "project": "yolov8",
+  "task": "pose",
+  "model": "weights/yolov8s-pose.pt",
+  "data": "datasets/my-coco-pose.yaml",
+  "output_dir": "output/edgepilot-huawei-yolov8-pose",
+  "calibration_data": "datasets/coco-pose/images/train2017",
+  "calibration_size": 5000,
+  "train_images": "datasets/coco-pose/images/train2017",
+  "val_images": "datasets/coco-pose/images/val2017",
+  "runtime": {
+    "device": "cuda:0",
+    "imgsz": 640,
+    "batch": 16,
+    "batch_min": 1,
+    "batch_max": 16
+  },
+  "target": {
+    "hardware": "NVIDIA T4",
+    "metric": "mAP50(P)",
+    "baseline_latency_ms": 10.0,
+    "baseline_accuracy": 85.6,
+    "latency_ms_max": 5.0,
+    "speedup_min": 2.0,
+    "accuracy_drop_max_pct": 1.0
+  },
+  "strategies": ["fp16", "ptq", "qat", "prune_qat"],
+  "qat_epochs": 30,
+  "prune_steps": 16,
+  "prune_epochs": 120,
+  "demo_metrics": [
+    {
+      "name": "fp16_trt_baseline",
+      "strategy": "fp16",
+      "latency_ms": 10.0,
+      "accuracy": 85.6
+    },
+    {
+      "name": "int8_ptq",
+      "strategy": "ptq",
+      "latency_ms": 4.6,
+      "accuracy": 83.6
+    },
+    {
+      "name": "int8_qat",
+      "strategy": "qat",
+      "latency_ms": 4.9,
+      "accuracy": 85.4
+    },
+    {
+      "name": "prune_0_3_qat",
+      "strategy": "prune_qat",
+      "latency_ms": 4.2,
+      "accuracy": 84.9
+    }
+  ]
+}

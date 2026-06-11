@@ -1,0 +1,1 @@
+from .prune import YOLOv8PosePrune

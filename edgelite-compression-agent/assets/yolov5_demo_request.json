@@ -1,0 +1,25 @@
+{
+  "project": "yolov5",
+  "task": "detect",
+  "model": "models/yolov5s.pt",
+  "data": "data/coco.yaml",
+  "coco_dir": "datasets/coco",
+  "output_dir": "runs/edgepilot-yolov5",
+  "runtime": {
+    "device": "cuda:0",
+    "imgsz": 640,
+    "batch": 16,
+    "batch_min": 1,
+    "batch_max": 16
+  },
+  "target": {
+    "hardware": "NVIDIA T4",
+    "metric": "mAP50",
+    "baseline_latency_ms": 10.0,
+    "baseline_accuracy": 56.8,
+    "latency_ms_max": 5.0,
+    "speedup_min": 2.0,
+    "accuracy_drop_max_pct": 1.0
+  },
+  "strategies": ["fp16", "qat", "prune_qat"]
+}

@@ -1,0 +1,33 @@
+# EdgeLite
+
+EdgeLite 是一个面向深度学习模型压缩与加速的工作区，当前整合了三个部分：
+
+- `yolov8/`：YOLOv8s-pose 压缩、量化、剪枝与 TensorRT 加速项目
+- `yolov5/`：YOLOv5 压缩与推理项目
+- `edgelite-compression-agent/`：自动化 Skill / Agent，用于生成压缩方案、运行 demo、输出报告和交接文档
+
+## 目录说明
+
+- `edgelite-compression-agent/agents/`：Agent 配置
+- `edgelite-compression-agent/scripts/edgepilot.py`：demo、autopilot、plan、inspect、execute 入口
+- `edgelite-compression-agent/handoff/`：交接说明文档
+- `edgepilot_demo_run/`、`edgepilot_autopilot_run/`：本地运行产物，默认不纳入版本库
+
+## 快速开始
+
+```bash
+cd /data/xl/Projects/EdgeLite
+bash edgelite-compression-agent/scripts/run_demo.sh
+```
+
+如果你要查看原始工程，请分别进入：
+
+```bash
+cd /data/xl/Projects/EdgeLite/yolov8
+cd /data/xl/Projects/EdgeLite/yolov5
+```
+
+## 说明
+
+- 大规模数据、缓存、输出目录和模型权重默认通过 `.gitignore` 排除
+- 如果需要复现实验，请按各子项目内的 README 和脚本准备环境、数据与权重

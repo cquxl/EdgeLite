@@ -1,0 +1,21 @@
+colored
+pytest-rerunfailures
+numpy<2
+onnx_graphsurgeon
+onnx==1.17.0
+onnxconverter_common==1.12.2
+onnxmltools==1.11.1
+onnxruntime
+protobuf==3.20.3
+pytest
+pytest-console-scripts
+pytest-virtualenv
+virtualenv
+pytest-xdist
+requests==2.25.1
+sympy==1.9
+tensorflow<2.0; python_version<'3.8'
+tf2onnx
+torch
+wheel
+pyyaml

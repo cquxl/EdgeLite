@@ -1,0 +1,31 @@
+# Local agent/demo outputs
+edgepilot_demo_run/
+edgepilot_autopilot_run/
+
+# Temporary repo packaging and probe folders
+_edgeLite_probe/
+
+# Python caches and notebooks
+**/__pycache__/
+**/.ipynb_checkpoints/
+**/.pytest_cache/
+**/.mypy_cache/
+
+# Large generated artifacts
+**/output/
+**/runs/
+**/cache/
+**/.weights/
+**/datasets/
+**/*.pt
+**/*.pth
+**/*.onnx
+**/*.engine
+**/*.plan
+**/*.trt
+
+# Editor and OS files
+.vscode/
+.cursor/
+.DS_Store
+Thumbs.db
