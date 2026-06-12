@@ -1,6 +1,7 @@
 # Local agent/demo outputs
 edgepilot_demo_run/
 edgepilot_autopilot_run/
+edgepilot-web-demo/runs/
 
 # Temporary repo packaging and probe folders
 _edgeLite_probe/

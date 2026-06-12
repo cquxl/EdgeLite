@@ -5,12 +5,14 @@ EdgeLite 是一个面向深度学习模型压缩与加速的工作区，当前�
 - `yolov8/`：YOLOv8s-pose 压缩、量化、剪枝与 TensorRT 加速项目
 - `yolov5/`：YOLOv5 压缩与推理项目
 - `edgelite-compression-agent/`：自动化 Skill / Agent，用于生成压缩方案、运行 demo、输出报告和交接文档
+- `edgepilot-web-demo/`：面向华为交付演示的网页工作台，可通过自然语言提示词触发 Agent 生成方案
 
 ## 目录说明
 
 - `edgelite-compression-agent/agents/`：Agent 配置
 - `edgelite-compression-agent/scripts/edgepilot.py`：demo、autopilot、plan、inspect、execute 入口
 - `edgelite-compression-agent/handoff/`：交接说明文档
+- `edgepilot-web-demo/`：网页 demo，默认 dry-run 生成报告，不执行训练/剪枝重任务
 - `edgepilot_demo_run/`、`edgepilot_autopilot_run/`：本地运行产物，默认不纳入版本库
 
 ## 快速开始
@@ -19,6 +21,15 @@ EdgeLite 是一个面向深度学习模型压缩与加速的工作区，当前�
 cd /data/xl/Projects/EdgeLite
 bash edgelite-compression-agent/scripts/run_demo.sh
 ```
+
+启动网页 demo：
+
+```bash
+cd /data/xl/Projects/EdgeLite
+python edgepilot-web-demo/server.py --host 127.0.0.1 --port 7860
+```
+
+然后打开 `http://127.0.0.1:7860`。
 
 如果你要查看原始工程，请分别进入：
 

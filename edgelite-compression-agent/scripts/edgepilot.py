@@ -460,6 +460,7 @@ def render_report(plan: Dict[str, Any], env: Dict[str, Any], evaluation: Dict[st
 - 模型: `{req['model']}`
 - 数据集: `{req['data']}`
 - 目标硬件: `{target['hardware']}`
+- 当前测试硬件: `{target.get('demo_hardware', target['hardware'])}`
 - 目标延迟: `<= {target['latency_ms_max']} ms` 或加速比 `>= {target['speedup_min']}x`
 - 目标精度损失: `<= {target['accuracy_drop_max_pct']}%`
 
