@@ -1,7 +1,7 @@
 interface:
   display_name: "EdgeLite 压缩加速 Agent"
-  short_description: "自动化 YOLO 压缩、导出与 TensorRT 加速。"
+  short_description: "从零准备环境并自动化 YOLO 压缩、导出与 TensorRT 加速。"
   icon_small: "./assets/icon.svg"
   icon_large: "./assets/icon.svg"
   brand_color: "#2563EB"
-  default_prompt: "Use $edgelite-compression-agent to 为 YOLO 压缩与 TensorRT 加速生成可复现的方案、报告和自动化 demo。"
+  default_prompt: "Use $edgelite-compression-agent to 从项目 clone、环境检查、数据准备开始，为 YOLO 压缩与 TensorRT 加速生成可复现方案、执行日志和交付报告。"

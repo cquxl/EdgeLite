@@ -22,6 +22,17 @@ cd /data/xl/Projects/EdgeLite
 bash edgelite-compression-agent/scripts/run_demo.sh
 ```
 
+从零检查项目、环境、模型和数据：
+
+```bash
+cd /data/xl/Projects/EdgeLite
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /data/xl/Projects/EdgeLite \
+  bootstrap \
+  --request edgelite-compression-agent/assets/huawei_yolov8_pose_request.json \
+  --output edgepilot_bootstrap_run
+```
+
 启动网页 demo：
 
 ```bash

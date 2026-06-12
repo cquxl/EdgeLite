@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -114,6 +115,269 @@ def inspect_environment(workspace: Path) -> Dict[str, Any]:
         },
         "projects": projects,
     }
+
+
+def has_edgelite_layout(workspace: Path) -> bool:
+    return (workspace / "edgelite-compression-agent").exists() and (
+        (workspace / "yolov8").exists() or (workspace / "yolov5").exists()
+    )
+
+
+def shell_join(cmd: List[str]) -> str:
+    return " ".join(shlex.quote(str(x)) for x in cmd)
+
+
+def candidate_python(python_env: Optional[str]) -> str:
+    if not python_env:
+        return sys.executable
+    env = Path(python_env).expanduser()
+    if env.is_dir():
+        for rel in ("bin/python", "Scripts/python.exe", "python"):
+            py = env / rel
+            if py.exists():
+                return str(py)
+    return str(env)
+
+
+def bootstrap_workspace(
+    workspace: Path,
+    repo_url: str,
+    request_path: Optional[Path],
+    output_dir: Path,
+    python_env: Optional[str] = None,
+    create_venv: bool = False,
+    install_deps: bool = False,
+    prepare_demo_data: bool = False,
+    yes: bool = False,
+) -> Dict[str, Any]:
+    """Prepare or describe the minimum environment needed to run EdgePilot."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    actions: List[Dict[str, Any]] = []
+    warnings: List[str] = []
+
+    clone_needed = not has_edgelite_layout(workspace)
+    if clone_needed:
+        cmd = ["git", "clone", repo_url, str(workspace)]
+        action = {
+            "name": "clone_edgelite",
+            "needed": True,
+            "executed": False,
+            "command": shell_join(cmd),
+            "reason": "未在 workspace 中发现 EdgeLite 项目布局。",
+        }
+        if yes:
+            workspace.parent.mkdir(parents=True, exist_ok=True)
+            probe = run_probe(cmd, timeout=180)
+            action.update({"executed": True, "ok": probe["ok"], "stdout": probe.get("stdout"), "stderr": probe.get("stderr")})
+            if not probe["ok"]:
+                warnings.append("EdgeLite clone 失败，请检查网络、GitHub 权限或 repo_url。")
+        actions.append(action)
+    else:
+        actions.append({
+            "name": "clone_edgelite",
+            "needed": False,
+            "executed": False,
+            "reason": "已发现 EdgeLite 项目布局。",
+        })
+
+    py = candidate_python(python_env)
+    venv_dir = workspace / ".venv-edgepilot"
+    if create_venv:
+        cmd = [sys.executable, "-m", "venv", str(venv_dir)]
+        action = {
+            "name": "create_python_env",
+            "needed": True,
+            "executed": False,
+            "command": shell_join(cmd),
+            "python": str(venv_dir / "bin" / "python"),
+        }
+        if yes:
+            probe = run_probe(cmd, timeout=120)
+            action.update({"executed": True, "ok": probe["ok"], "stdout": probe.get("stdout"), "stderr": probe.get("stderr")})
+            if probe["ok"]:
+                py = str(venv_dir / "bin" / "python")
+            else:
+                warnings.append("Python venv 创建失败，将继续使用当前 Python。")
+        actions.append(action)
+    else:
+        actions.append({
+            "name": "select_python_env",
+            "needed": False,
+            "executed": False,
+            "python": py,
+            "reason": "使用用户提供的 Python 环境或当前 Python。",
+        })
+
+    req_files = []
+    for rel in ("yolov8/requirements.txt", "yolov5/requirements.txt"):
+        path = workspace / rel
+        if path.exists():
+            req_files.append(path)
+        elif clone_needed:
+            req_files.append(path)
+    if install_deps:
+        for req_file in req_files:
+            cmd = [py, "-m", "pip", "install", "-r", str(req_file)]
+            action = {
+                "name": f"install_deps_{req_file.parent.name}",
+                "needed": True,
+                "executed": False,
+                "command": shell_join(cmd),
+            }
+            if yes:
+                probe = run_probe(cmd, timeout=1800, cwd=req_file.parent)
+                action.update({"executed": True, "ok": probe["ok"], "stdout": probe.get("stdout")[-2000:], "stderr": probe.get("stderr")[-2000:]})
+                if not probe["ok"]:
+                    warnings.append(f"{req_file} 依赖安装失败，请检查 CUDA/PyTorch/TensorRT 版本匹配。")
+            actions.append(action)
+    else:
+        actions.append({
+            "name": "install_deps",
+            "needed": bool(req_files),
+            "executed": False,
+            "commands": [shell_join([py, "-m", "pip", "install", "-r", str(p)]) for p in req_files],
+            "reason": "默认不自动安装依赖；需要 --install-deps --yes。",
+        })
+
+    request = load_json(request_path) if request_path and request_path.exists() else {}
+    normalized = request_defaults(request) if request else request_defaults({})
+    project_root = workspace / normalized["project"]
+    model_path = project_root / normalized["model"]
+    data_path = project_root / normalized["data"]
+    calibration_path = project_root / normalized.get("calibration_data", "")
+    missing = {
+        "model": not model_path.exists(),
+        "data_yaml": not data_path.exists(),
+        "calibration_data": bool(normalized.get("calibration_data")) and not calibration_path.exists(),
+    }
+    if missing["model"]:
+        warnings.append(f"模型文件不存在: {model_path}。真实压缩前必须提供权重或下载权重。")
+    if missing["data_yaml"]:
+        warnings.append(f"数据配置不存在: {data_path}。真实精度评估前必须提供数据 yaml。")
+    if missing["calibration_data"]:
+        warnings.append(f"校准数据不存在: {calibration_path}。PTQ/INT8 前必须准备校准集。")
+
+    demo_data_dir = project_root / "datasets" / "edgepilot-mini"
+    demo_yaml = project_root / "datasets" / "edgepilot-mini-coco-pose.yaml"
+    data_action = {
+        "name": "prepare_demo_data",
+        "needed": prepare_demo_data,
+        "executed": False,
+        "path": str(demo_data_dir),
+        "yaml": str(demo_yaml),
+        "note": "mini 数据只用于流程 smoke test，不可作为正式 mAP 结论。",
+    }
+    if prepare_demo_data and yes:
+        (demo_data_dir / "images" / "train").mkdir(parents=True, exist_ok=True)
+        (demo_data_dir / "images" / "val").mkdir(parents=True, exist_ok=True)
+        (demo_data_dir / "labels" / "train").mkdir(parents=True, exist_ok=True)
+        (demo_data_dir / "labels" / "val").mkdir(parents=True, exist_ok=True)
+        source_images = list((project_root / "images").glob("*.*"))[:4]
+        for idx, src in enumerate(source_images):
+            dst_train = demo_data_dir / "images" / "train" / f"sample_{idx}{src.suffix}"
+            dst_val = demo_data_dir / "images" / "val" / f"sample_{idx}{src.suffix}"
+            shutil.copy2(src, dst_train)
+            shutil.copy2(src, dst_val)
+            (demo_data_dir / "labels" / "train" / f"sample_{idx}.txt").write_text("", encoding="utf-8")
+            (demo_data_dir / "labels" / "val" / f"sample_{idx}.txt").write_text("", encoding="utf-8")
+        demo_yaml.write_text(
+            "path: datasets/edgepilot-mini\n"
+            "train: images/train\n"
+            "val: images/val\n"
+            "kpt_shape: [17, 3]\n"
+            "names:\n"
+            "  0: person\n",
+            encoding="utf-8",
+        )
+        data_action["executed"] = True
+        data_action["samples"] = len(source_images)
+        if not source_images:
+            warnings.append("未找到可复制的样例图片，mini 数据目录已创建但为空。")
+    actions.append(data_action)
+
+    env = inspect_environment(workspace)
+    trt_available = bool(env.get("tools", {}).get("trtexec", {}).get("ok")) or bool(env.get("tools", {}).get("tensorrt", {}).get("ok"))
+    if not trt_available:
+        warnings.append("未检测到 TensorRT/trtexec。可先规划策略，但真实 engine 构建和延迟测试会失败。")
+
+    bootstrap = {
+        "generated_at": now(),
+        "workspace": str(workspace),
+        "repo_url": repo_url,
+        "python": py,
+        "request": normalized,
+        "checks": {
+            "layout_ready": has_edgelite_layout(workspace),
+            "model_path": str(model_path),
+            "data_yaml": str(data_path),
+            "calibration_data": str(calibration_path) if normalized.get("calibration_data") else None,
+            "missing": missing,
+            "tensorrt_available": trt_available,
+        },
+        "actions": actions,
+        "warnings": warnings,
+        "env": env,
+    }
+    write_json(output_dir / "bootstrap.json", bootstrap)
+    (output_dir / "bootstrap.md").write_text(render_bootstrap_report(bootstrap), encoding="utf-8")
+    return bootstrap
+
+
+def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
+    action_rows = []
+    for action in bootstrap["actions"]:
+        action_rows.append(
+            "| {name} | {needed} | {executed} | {summary} |".format(
+                name=action["name"],
+                needed="是" if action.get("needed") else "否",
+                executed="是" if action.get("executed") else "否",
+                summary=action.get("reason") or action.get("command") or action.get("note") or "-",
+            )
+        )
+    warnings = "\n".join(f"- {w}" for w in bootstrap.get("warnings", [])) or "- 无"
+    req = bootstrap["request"]
+    return f"""# EdgePilot Bootstrap 报告
+
+生成时间: {bootstrap['generated_at']}
+
+## 工作区
+
+- Workspace: `{bootstrap['workspace']}`
+- Repo: `{bootstrap['repo_url']}`
+- Python: `{bootstrap['python']}`
+
+## 需求摘要
+
+- 项目: `{req['project']}`
+- 任务: `{req['task']}`
+- 模型: `{req['model']}`
+- 数据: `{req['data']}`
+- 目标硬件: `{req['target']['hardware']}`
+
+## 就绪检查
+
+- 项目布局: `{'ready' if bootstrap['checks']['layout_ready'] else 'missing'}`
+- 模型路径: `{bootstrap['checks']['model_path']}`
+- 数据配置: `{bootstrap['checks']['data_yaml']}`
+- 校准数据: `{bootstrap['checks']['calibration_data']}`
+- TensorRT: `{'available' if bootstrap['checks']['tensorrt_available'] else 'not detected'}`
+
+## Bootstrap 动作
+
+| 动作 | 需要 | 已执行 | 摘要 |
+| --- | --- | --- | --- |
+{chr(10).join(action_rows)}
+
+## 风险与缺口
+
+{warnings}
+
+## 下一步
+
+1. 解决缺失的模型、数据、TensorRT 或 Python 依赖。
+2. 运行 `edgepilot.py autopilot` 生成候选压缩方案。
+3. 只有在确认数据和环境后，才加 `--execute --yes` 执行训练、剪枝和 TensorRT 构建。
+"""
 
 
 def request_defaults(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -569,6 +833,28 @@ def cmd_inspect(args: argparse.Namespace) -> None:
     print(json.dumps(env, indent=2, ensure_ascii=False))
 
 
+def cmd_bootstrap(args: argparse.Namespace) -> None:
+    request = Path(args.request).resolve() if args.request else None
+    result = bootstrap_workspace(
+        workspace=Path(args.workspace).resolve(),
+        repo_url=args.repo_url,
+        request_path=request,
+        output_dir=Path(args.output).resolve(),
+        python_env=args.python_env,
+        create_venv=args.create_venv,
+        install_deps=args.install_deps,
+        prepare_demo_data=args.prepare_demo_data,
+        yes=args.yes,
+    )
+    print("已生成 bootstrap 产物：")
+    print(f"bootstrap: {Path(args.output).resolve() / 'bootstrap.json'}")
+    print(f"report: {Path(args.output).resolve() / 'bootstrap.md'}")
+    if result.get("warnings"):
+        print("风险与缺口：")
+        for warning in result["warnings"]:
+            print(f"- {warning}")
+
+
 def cmd_plan(args: argparse.Namespace) -> None:
     paths = materialize_plan(Path(args.request).resolve(), Path(args.workspace).resolve(), Path(args.output).resolve())
     print("已生成方案产物：")
@@ -621,6 +907,17 @@ def build_parser() -> argparse.ArgumentParser:
     inspect_p = sub.add_parser("inspect", help="Inspect local environment and project layout.")
     inspect_p.add_argument("--output", help="Optional JSON output path.")
     inspect_p.set_defaults(func=cmd_inspect)
+
+    bootstrap_p = sub.add_parser("bootstrap", help="Prepare or audit a fresh EdgeLite compression workspace.")
+    bootstrap_p.add_argument("--repo-url", default="https://github.com/cquxl/EdgeLite.git", help="Repository to clone if the workspace is missing.")
+    bootstrap_p.add_argument("--request", help="Optional request JSON path for model/data checks.")
+    bootstrap_p.add_argument("--output", default="edgepilot_bootstrap_run", help="Output directory.")
+    bootstrap_p.add_argument("--python-env", help="Existing Python executable or env directory to use.")
+    bootstrap_p.add_argument("--create-venv", action="store_true", help="Create .venv-edgepilot under the workspace.")
+    bootstrap_p.add_argument("--install-deps", action="store_true", help="Install yolov5/yolov8 requirements. Requires --yes to execute.")
+    bootstrap_p.add_argument("--prepare-demo-data", action="store_true", help="Create a tiny smoke-test dataset. Requires --yes to write files.")
+    bootstrap_p.add_argument("--yes", action="store_true", help="Actually perform clone/env/install/data actions.")
+    bootstrap_p.set_defaults(func=cmd_bootstrap)
 
     plan_p = sub.add_parser("plan", help="Generate plan, commands, and report from a request JSON.")
     plan_p.add_argument("--request", required=True, help="Request JSON path.")

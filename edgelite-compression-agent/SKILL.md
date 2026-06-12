@@ -1,54 +1,137 @@
 ---
 name: edgelite-compression-agent
-description: 面向 YOLOv5/YOLOv8 的模型压缩、TensorRT 加速规划、执行与报告自动化；适用于 PTQ、QAT、剪枝、环境检查和交付 demo。
+description: 从零准备并执行 YOLOv5/YOLOv8 模型压缩与 TensorRT 加速；支持项目 clone、环境检查、Python 环境选择、依赖/数据准备、PTQ、QAT、结构化剪枝、真实执行日志、报告和交付 demo。
 ---
 
 # EdgeLite 压缩加速 Agent
 
 ## 作用
 
-这个 skill 用来把一个压缩/部署需求变成可复现的流程。它支持 YOLOv5 和 YOLOv8，能自动生成候选方案、检查本地环境、输出命令脚本和报告。
+这个 skill 把“给定 YOLO 模型路径和部署目标”转成可复现的压缩加速流程。它不默认环境已经准备好：如果项目、Python、依赖、数据或 TensorRT 缺失，应先执行 bootstrap 检查并输出缺口，再进入压缩策略规划或真实执行。
 
-## 适用场景
+## 典型触发
 
-- 需要为 CNN 检测/姿态模型做压缩与加速
-- 需要比较 FP16、PTQ、QAT、剪枝+QAT
-- 需要生成可交付 demo
-- 需要给华为这类场景输出稳定的技术方案
+用户可能只说：
+
+```text
+调用 EdgeLite skill，压缩 YOLOv8 模型，pt 路径为 xxx，希望部署到 NVIDIA T4，精度损失 <=1%，速度提升 >=2x。
+```
+
+此时应按下面顺序处理。
 
 ## 工作规则
 
-1. 分开处理 `yolov8/` 和 `yolov5/`。
-2. 优先在目标硬件或目标 TensorRT 版本上构建 engine。
-3. 先 FP16，再 PTQ，再 QAT，再 prune+QAT。
-4. 姿态任务优先测试 0.3 稀疏度，再考虑更激进的剪枝。
-5. 如果没有真实指标，就输出计划，不假装已经跑完。
-6. 默认 dry-run；只有明确允许才执行重任务。
+1. 先定位 workspace。若没有 `yolov5/`、`yolov8/` 或 `edgelite-compression-agent/`，先建议或执行 clone。
+2. 先 bootstrap，再 plan/autopilot。不要直接假设依赖、数据、权重、TensorRT 都存在。
+3. Python 环境优先级：用户指定环境 > 当前激活环境 > 创建 `.venv-edgepilot`。安装依赖、创建环境、下载/写入数据必须得到明确允许。
+4. 数据策略：真实精度评估必须使用用户提供或目标任务匹配的数据集；mini 数据只能做流程 smoke test，不能作为 mAP 结论。
+5. 压缩顺序：Dense/PyTorch baseline -> FP16 TensorRT -> INT8 PTQ -> INT8 QAT -> 结构化剪枝+QAT。
+6. 姿态任务优先尝试 0.3 结构化剪枝；PTQ 超出精度预算时切换 QAT。
+7. 没有真实指标时只输出计划、命令和风险，不把 demo 指标说成本次结果。
+8. 执行训练、剪枝、导出 engine、安装依赖等重任务前，必须有明确执行许可，例如 `--yes` 或用户明确说“执行真实流程”。
 
-## 工作流
+## 标准流程
 
-1. Inspect: 检查 CUDA / TensorRT / GPU 和项目布局。
-2. Plan: 根据 request JSON 生成候选方案。
-3. Evaluate: 按精度损失和速度门槛筛选。
-4. Deliver: 输出 `plan.json`、`env.json`、`evaluation.json`、`commands.sh`、`report.md`。
-5. Execute: 在可用硬件上运行推荐候选方案，记录日志。
+### 1. Bootstrap
 
-## Demo 用法
+检查或准备仓库、环境、模型和数据：
 
 ```bash
-python scripts/edgepilot.py demo --output edgepilot_demo_run
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  bootstrap \
+  --repo-url https://github.com/cquxl/EdgeLite.git \
+  --request request.json \
+  --output edgepilot_bootstrap_run
 ```
 
+只有用户明确允许时才执行写入动作：
+
 ```bash
-python scripts/edgepilot.py autopilot --request assets/huawei_yolov8_pose_request.json --output edgepilot_autopilot_run --execute --yes
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  bootstrap \
+  --repo-url https://github.com/cquxl/EdgeLite.git \
+  --request request.json \
+  --python-env /path/to/python-or-env \
+  --create-venv \
+  --install-deps \
+  --prepare-demo-data \
+  --yes
+```
+
+输出：
+
+- `bootstrap.json`
+- `bootstrap.md`
+
+### 2. Inspect
+
+```bash
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  inspect --output env.json
+```
+
+### 3. Plan / Autopilot
+
+根据 request JSON 生成候选方案、命令和报告：
+
+```bash
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  autopilot \
+  --request request.json \
+  --output edgepilot_autopilot_run
+```
+
+真实执行推荐候选：
+
+```bash
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  autopilot \
+  --request request.json \
+  --output edgepilot_autopilot_run \
+  --execute --yes
+```
+
+### 4. Web Demo
+
+网页版用于交付演示：
+
+```bash
+python edgepilot-web-demo/server.py --host 0.0.0.0 --port 7860
+```
+
+默认是快速演示模式；勾选“真实执行候选搜索”才会逐个执行候选命令并显示日志。
+
+## Request JSON 最小字段
+
+```json
+{
+  "project": "yolov8",
+  "task": "pose",
+  "model": "weights/yolov8s-pose.pt",
+  "data": "datasets/my-coco-pose.yaml",
+  "target": {
+    "hardware": "NVIDIA T4",
+    "metric": "mAP50(P)",
+    "baseline_latency_ms": 10.0,
+    "baseline_accuracy": 85.6,
+    "latency_ms_max": 5.0,
+    "speedup_min": 2.0,
+    "accuracy_drop_max_pct": 1.0
+  }
+}
 ```
 
 ## 参考文档
 
+- [Bootstrap 工作流](references/bootstrap_workflow.md)
 - [压缩策略](references/compression_policy.md)
 - [TensorRT 部署](references/tensorrt_deployment.md)
 - [YOLOv8 流程](references/yolov8_workflow.md)
 - [YOLOv5 流程](references/yolov5_workflow.md)
 - [报告模板](references/report_template.md)
 - [交接文档](handoff/README_zh.md)
-
