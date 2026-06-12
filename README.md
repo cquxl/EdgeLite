@@ -4,8 +4,10 @@ EdgeLite 是一个面向深度学习模型压缩与加速的工作区，当前�
 
 - `yolov8/`：YOLOv8s-pose 压缩、量化、剪枝与 TensorRT 加速项目
 - `yolov5/`：YOLOv5 压缩与推理项目
-- `edgelite-compression-agent/`：自动化 Skill / Agent，用于生成压缩方案、运行 demo、输出报告和交接文档
+- `edgelite-compression-agent/`：自动化 Skill / Agent，用于从零检查环境、自动解析/下载模型和样例数据、生成压缩方案、运行 demo、输出报告和交接文档
 - `edgepilot-web-demo/`：面向华为交付演示的网页工作台，可通过自然语言提示词触发 Agent 生成方案
+
+说明：当前 YOLOv5/YOLOv8 已内置真实执行 adapter；ViT、ResNet、LLM、扩散模型等会进入通用 bootstrap 和压缩规划，并提示需要补充的项目 adapter。
 
 ## 目录说明
 
@@ -31,6 +33,17 @@ python edgelite-compression-agent/scripts/edgepilot.py \
   bootstrap \
   --request edgelite-compression-agent/assets/huawei_yolov8_pose_request.json \
   --output edgepilot_bootstrap_run
+```
+
+如果模型或样例数据缺失，可让 bootstrap 自动解析官方资源并下载：
+
+```bash
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /data/xl/Projects/EdgeLite \
+  bootstrap \
+  --request edgelite-compression-agent/assets/huawei_yolov8_pose_request.json \
+  --auto-download-assets \
+  --yes
 ```
 
 启动网页 demo：

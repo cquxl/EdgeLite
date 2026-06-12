@@ -7,10 +7,13 @@ import argparse
 import json
 import os
 import platform
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -19,6 +22,39 @@ from typing import Any, Dict, Iterable, List, Optional
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
 DEFAULT_WORKSPACE = SKILL_DIR.parent
+
+OFFICIAL_ASSET_REGISTRY = {
+    "models": {
+        "yolov8s-pose.pt": [
+            "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s-pose.pt",
+            "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8s-pose.pt",
+            "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8s-pose.pt",
+        ],
+        "yolov8n-pose.pt": [
+            "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n-pose.pt",
+            "https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n-pose.pt",
+            "https://github.com/ultralytics/assets/releases/download/v8.1.0/yolov8n-pose.pt",
+        ],
+        "yolov5s.pt": [
+            "https://github.com/ultralytics/yolov5/releases/download/v7.0/yolov5s.pt",
+        ],
+    },
+    "datasets": {
+        "coco8-pose": [
+            "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8-pose.zip",
+        ],
+        "coco8": [
+            "https://github.com/ultralytics/assets/releases/download/v0.0.0/coco8.zip",
+        ],
+    },
+}
+
+SUPPORTED_ADAPTERS = {
+    "yolov8": "production",
+    "yolov5": "production",
+}
+
+KNOWN_MODEL_FAMILIES = {"vit", "resnet", "bert", "llama", "qwen", "deepseek", "ddpm", "stable-diffusion"}
 
 
 def now() -> str:
@@ -139,6 +175,173 @@ def candidate_python(python_env: Optional[str]) -> str:
     return str(env)
 
 
+def find_urls_in_repo(root: Path, filename_hint: str) -> List[str]:
+    """Search small repo docs/configs for URLs related to a model or dataset."""
+    if not root.exists():
+        return []
+    candidates = []
+    patterns = ["README*.md", "*.yaml", "*.yml", "*.txt"]
+    for pattern in patterns:
+        candidates.extend(root.rglob(pattern))
+    urls: List[str] = []
+    hint = filename_hint.lower()
+    for path in candidates[:300]:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        if hint and hint not in text.lower() and hint not in path.name.lower():
+            continue
+        for url in re.findall(r"https?://[^\s)\"']+", text):
+            cleaned = url.rstrip(".,")
+            if not hint or hint in cleaned.lower() or "download" in cleaned.lower() or "assets" in cleaned.lower():
+                urls.append(cleaned)
+    return list(dict.fromkeys(urls))
+
+
+def first_available_url(urls: List[str], timeout: int = 10) -> Optional[str]:
+    for url in urls:
+        probe = run_probe(["curl", "-L", "-I", "--max-time", str(timeout), url], timeout=timeout + 5)
+        stdout = probe.get("stdout", "")
+        if probe.get("ok") and (" 200 " in stdout or " 302 " in stdout):
+            return url
+    return urls[0] if urls else None
+
+
+def download_url(url: str, destination: Path, timeout: int = 1800) -> Dict[str, Any]:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destination.with_suffix(destination.suffix + ".tmp")
+    try:
+        if shutil.which("curl"):
+            probe = run_probe(
+                [
+                    "curl",
+                    "-L",
+                    "--fail",
+                    "--connect-timeout",
+                    "20",
+                    "--max-time",
+                    str(timeout),
+                    "-o",
+                    str(tmp),
+                    url,
+                ],
+                timeout=timeout + 30,
+            )
+            if not probe["ok"]:
+                if tmp.exists():
+                    tmp.unlink()
+                return {
+                    "ok": False,
+                    "error": probe.get("stderr") or probe.get("stdout") or probe.get("error", "curl failed"),
+                    "path": str(destination),
+                }
+        else:
+            with urllib.request.urlopen(url, timeout=timeout) as response, tmp.open("wb") as f:
+                shutil.copyfileobj(response, f)
+        tmp.replace(destination)
+        return {"ok": True, "path": str(destination), "bytes": destination.stat().st_size}
+    except Exception as exc:
+        if tmp.exists():
+            tmp.unlink()
+        return {"ok": False, "error": str(exc), "path": str(destination)}
+
+
+def safe_extract_zip(zip_path: Path, destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path) as zf:
+        for member in zf.infolist():
+            target = (destination / member.filename).resolve()
+            if destination.resolve() not in target.parents and target != destination.resolve():
+                raise RuntimeError(f"unsafe zip path: {member.filename}")
+        zf.extractall(destination)
+
+
+def dataset_name_for_request(req: Dict[str, Any]) -> str:
+    if req.get("task") == "pose":
+        return "coco8-pose"
+    return "coco8"
+
+
+def infer_project(request: Dict[str, Any]) -> str:
+    project = str(request.get("project", "")).lower().strip()
+    if project:
+        return project
+    text = " ".join(str(request.get(k, "")) for k in ("model", "task", "architecture", "model_family")).lower()
+    for name in ("yolov8", "yolov5", "vit", "resnet", "bert", "llama", "qwen", "deepseek", "ddpm"):
+        if name in text:
+            return name
+    return "generic"
+
+
+def adapter_status(project: str) -> Dict[str, Any]:
+    if project in SUPPORTED_ADAPTERS:
+        return {"supported": True, "level": SUPPORTED_ADAPTERS[project], "message": "已内置真实执行 adapter。"}
+    if project in KNOWN_MODEL_FAMILIES:
+        return {
+            "supported": False,
+            "level": "adapter_required",
+            "message": f"识别到 {project} 模型族，但当前仓库未内置真实执行 adapter；只能做 bootstrap、通用规划和风险报告。",
+        }
+    return {
+        "supported": False,
+        "level": "unknown",
+        "message": "未识别模型族；需要用户提供加载、评估、导出和部署脚本接口。",
+    }
+
+
+def project_root_for_request(workspace: Path, req: Dict[str, Any]) -> Path:
+    project = req.get("project", "generic")
+    if project in {"yolov5", "yolov8"}:
+        return workspace / project
+    root = req.get("project_root") or req.get("source_root")
+    return Path(root).expanduser().resolve() if root else workspace
+
+
+def resolve_request_path(project_root: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else project_root / path
+
+
+def yaml_for_downloaded_dataset(project_root: Path, dataset_name: str) -> Path:
+    if dataset_name == "coco8-pose":
+        yaml_path = project_root / "datasets" / "coco8-pose.yaml"
+        yaml_path.parent.mkdir(parents=True, exist_ok=True)
+        yaml_path.write_text(
+            "path: datasets/coco8-pose\n"
+            "train: images/train\n"
+            "val: images/val\n"
+            "kpt_shape: [17, 3]\n"
+            "names:\n"
+            "  0: person\n",
+            encoding="utf-8",
+        )
+        return yaml_path
+    yaml_path = project_root / "datasets" / "coco8.yaml"
+    yaml_path.parent.mkdir(parents=True, exist_ok=True)
+    yaml_path.write_text(
+        "path: datasets/coco8\n"
+        "train: images/train\n"
+        "val: images/val\n"
+        "names:\n"
+        "  0: person\n",
+        encoding="utf-8",
+    )
+    return yaml_path
+
+
+def resolve_model_urls(project_root: Path, model_name: str) -> List[str]:
+    urls = find_urls_in_repo(project_root, model_name)
+    urls.extend(OFFICIAL_ASSET_REGISTRY["models"].get(model_name, []))
+    return list(dict.fromkeys(urls))
+
+
+def resolve_dataset_urls(project_root: Path, dataset_name: str) -> List[str]:
+    urls = find_urls_in_repo(project_root, dataset_name)
+    urls.extend(OFFICIAL_ASSET_REGISTRY["datasets"].get(dataset_name, []))
+    return list(dict.fromkeys(urls))
+
+
 def bootstrap_workspace(
     workspace: Path,
     repo_url: str,
@@ -148,6 +351,7 @@ def bootstrap_workspace(
     create_venv: bool = False,
     install_deps: bool = False,
     prepare_demo_data: bool = False,
+    auto_download_assets: bool = False,
     yes: bool = False,
 ) -> Dict[str, Any]:
     """Prepare or describe the minimum environment needed to run EdgePilot."""
@@ -241,21 +445,101 @@ def bootstrap_workspace(
 
     request = load_json(request_path) if request_path and request_path.exists() else {}
     normalized = request_defaults(request) if request else request_defaults({})
-    project_root = workspace / normalized["project"]
-    model_path = project_root / normalized["model"]
-    data_path = project_root / normalized["data"]
-    calibration_path = project_root / normalized.get("calibration_data", "")
+    project_root = project_root_for_request(workspace, normalized)
+    model_path = resolve_request_path(project_root, normalized["model"]) if normalized.get("model") else project_root
+    data_path = resolve_request_path(project_root, normalized["data"]) if normalized.get("data") else project_root
+    calibration_path = resolve_request_path(project_root, normalized.get("calibration_data", "")) if normalized.get("calibration_data") else project_root
     missing = {
-        "model": not model_path.exists(),
-        "data_yaml": not data_path.exists(),
+        "model": bool(normalized.get("model")) and not model_path.exists(),
+        "data_yaml": bool(normalized.get("data")) and not data_path.exists(),
         "calibration_data": bool(normalized.get("calibration_data")) and not calibration_path.exists(),
     }
+    adapter = adapter_status(normalized["project"])
+    if not adapter["supported"]:
+        warnings.append(adapter["message"])
+
+    model_name = Path(normalized["model"]).name
+    model_urls = resolve_model_urls(project_root, model_name)
+    selected_model_url = first_available_url(model_urls) if missing["model"] and model_urls else None
+    model_action = {
+        "name": "download_model",
+        "needed": missing["model"],
+        "executed": False,
+        "target": str(model_path),
+        "source": selected_model_url,
+        "candidates": model_urls,
+        "search_hint": f"{model_name} official pretrained weights download",
+    }
+    if missing["model"] and auto_download_assets:
+        if selected_model_url and yes:
+            result = download_url(selected_model_url, model_path)
+            model_action.update({"executed": True, **result})
+            missing["model"] = not model_path.exists()
+            if not result["ok"]:
+                warnings.append(f"模型自动下载失败: {result.get('error')}")
+        elif selected_model_url:
+            model_action["command"] = shell_join(["curl", "-L", "-o", str(model_path), selected_model_url])
+        else:
+            warnings.append(f"未找到 {model_name} 的可用官方下载源。")
+    elif missing["model"]:
+        warnings.append(f"模型文件不存在: {model_path}。可使用 --auto-download-assets --yes 自动尝试下载。")
+    actions.append(model_action)
+
+    dataset_name = dataset_name_for_request(normalized)
+    dataset_urls = resolve_dataset_urls(project_root, dataset_name)
+    selected_dataset_url = first_available_url(dataset_urls) if (missing["data_yaml"] or missing["calibration_data"]) and dataset_urls else None
+    dataset_zip = project_root / "datasets" / f"{dataset_name}.zip"
+    dataset_action = {
+        "name": "download_dataset",
+        "needed": missing["data_yaml"] or missing["calibration_data"],
+        "executed": False,
+        "target": str(project_root / "datasets" / dataset_name),
+        "source": selected_dataset_url,
+        "candidates": dataset_urls,
+        "search_hint": f"{dataset_name} official YOLO dataset download",
+        "note": "默认下载小样例数据保证流程连通；正式精度验收仍需目标验证集。",
+    }
+    if (missing["data_yaml"] or missing["calibration_data"]) and auto_download_assets:
+        if selected_dataset_url and yes:
+            result = download_url(selected_dataset_url, dataset_zip)
+            dataset_action.update({"download": result})
+            if result["ok"]:
+                try:
+                    safe_extract_zip(dataset_zip, project_root / "datasets")
+                    downloaded_yaml = yaml_for_downloaded_dataset(project_root, dataset_name)
+                    if missing["data_yaml"]:
+                        normalized["data"] = str(downloaded_yaml.relative_to(project_root))
+                        data_path = downloaded_yaml
+                    if missing["calibration_data"]:
+                        normalized["calibration_data"] = f"datasets/{dataset_name}/images/train"
+                        normalized["train_images"] = f"datasets/{dataset_name}/images/train"
+                        normalized["val_images"] = f"datasets/{dataset_name}/images/val"
+                        calibration_path = project_root / normalized["calibration_data"]
+                    missing["data_yaml"] = not data_path.exists()
+                    missing["calibration_data"] = bool(normalized.get("calibration_data")) and not calibration_path.exists()
+                    dataset_action.update({"executed": True, "ok": True, "yaml": str(data_path), "calibration_data": str(calibration_path)})
+                except Exception as exc:
+                    dataset_action.update({"executed": True, "ok": False, "error": str(exc)})
+                    warnings.append(f"数据集解压或 yaml 生成失败: {exc}")
+            else:
+                warnings.append(f"数据集自动下载失败: {result.get('error')}")
+        elif selected_dataset_url:
+            dataset_action["commands"] = [
+                shell_join(["curl", "-L", "-o", str(dataset_zip), selected_dataset_url]),
+                shell_join(["python", "-m", "zipfile", "-e", str(dataset_zip), str(project_root / "datasets")]),
+            ]
+        else:
+            warnings.append(f"未找到 {dataset_name} 的可用官方下载源。")
+    elif missing["data_yaml"] or missing["calibration_data"]:
+        warnings.append("数据或校准集不存在。可使用 --auto-download-assets --yes 自动下载官方小样例数据。")
+    actions.append(dataset_action)
+
     if missing["model"]:
-        warnings.append(f"模型文件不存在: {model_path}。真实压缩前必须提供权重或下载权重。")
+        warnings.append(f"模型文件仍不存在: {model_path}。真实压缩前必须提供权重。")
     if missing["data_yaml"]:
-        warnings.append(f"数据配置不存在: {data_path}。真实精度评估前必须提供数据 yaml。")
+        warnings.append(f"数据配置仍不存在: {data_path}。真实精度评估前必须提供数据 yaml。")
     if missing["calibration_data"]:
-        warnings.append(f"校准数据不存在: {calibration_path}。PTQ/INT8 前必须准备校准集。")
+        warnings.append(f"校准数据仍不存在: {calibration_path}。PTQ/INT8 前必须准备校准集。")
 
     demo_data_dir = project_root / "datasets" / "edgepilot-mini"
     demo_yaml = project_root / "datasets" / "edgepilot-mini-coco-pose.yaml"
@@ -313,6 +597,7 @@ def bootstrap_workspace(
             "calibration_data": str(calibration_path) if normalized.get("calibration_data") else None,
             "missing": missing,
             "tensorrt_available": trt_available,
+            "adapter": adapter,
         },
         "actions": actions,
         "warnings": warnings,
@@ -326,15 +611,33 @@ def bootstrap_workspace(
 def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
     action_rows = []
     for action in bootstrap["actions"]:
+        summary = (
+            action.get("reason")
+            or action.get("command")
+            or action.get("source")
+            or "; ".join(action.get("commands", []))
+            or action.get("note")
+            or action.get("search_hint")
+            or "-"
+        )
         action_rows.append(
             "| {name} | {needed} | {executed} | {summary} |".format(
                 name=action["name"],
                 needed="是" if action.get("needed") else "否",
                 executed="是" if action.get("executed") else "否",
-                summary=action.get("reason") or action.get("command") or action.get("note") or "-",
+                summary=str(summary).replace("|", "\\|"),
             )
         )
     warnings = "\n".join(f"- {w}" for w in bootstrap.get("warnings", [])) or "- 无"
+    source_lines = []
+    for action in bootstrap["actions"]:
+        if not action.get("needed"):
+            continue
+        if action.get("source"):
+            source_lines.append(f"- {action['name']}: {action['source']}")
+        elif action.get("search_hint"):
+            source_lines.append(f"- {action['name']}: 未找到直接 URL；建议搜索 `{action['search_hint']}`")
+    sources = "\n".join(source_lines) or "- 无"
     req = bootstrap["request"]
     return f"""# EdgePilot Bootstrap 报告
 
@@ -353,6 +656,7 @@ def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
 - 模型: `{req['model']}`
 - 数据: `{req['data']}`
 - 目标硬件: `{req['target']['hardware']}`
+- Adapter: `{bootstrap['checks']['adapter'].get('level')}` - {bootstrap['checks']['adapter'].get('message')}
 
 ## 就绪检查
 
@@ -368,6 +672,10 @@ def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
 | --- | --- | --- | --- |
 {chr(10).join(action_rows)}
 
+## 资源来源
+
+{sources}
+
 ## 风险与缺口
 
 {warnings}
@@ -381,10 +689,17 @@ def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
 
 
 def request_defaults(request: Dict[str, Any]) -> Dict[str, Any]:
-    project = request.get("project", "yolov8")
+    project = infer_project(request)
     task = request.get("task", "pose" if project == "yolov8" else "detect")
-    model = request.get("model", "weights/yolov8s-pose.pt" if project == "yolov8" else "models/yolov5s.pt")
-    data = request.get("data", "datasets/my-coco-pose.yaml" if project == "yolov8" else "data/coco.yaml")
+    if project == "yolov8":
+        model = request.get("model", "weights/yolov8s-pose.pt")
+        data = request.get("data", "datasets/my-coco-pose.yaml")
+    elif project == "yolov5":
+        model = request.get("model", "models/yolov5s.pt")
+        data = request.get("data", "data/coco.yaml")
+    else:
+        model = request.get("model", "")
+        data = request.get("data", "")
     output_dir = request.get("output_dir", f"output/edgepilot-{project}-{task}")
 
     runtime = {
@@ -416,6 +731,7 @@ def request_defaults(request: Dict[str, Any]) -> Dict[str, Any]:
         "runtime": runtime,
         "target": target,
         "strategies": request.get("strategies", ["fp16", "ptq", "qat", "prune_qat"]),
+        "adapter": adapter_status(project),
     })
     return normalized
 
@@ -586,6 +902,42 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
     ]
 
 
+def build_generic_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[str, Any]]:
+    project = req.get("project", "generic")
+    model = req.get("model") or "<model path required>"
+    data = req.get("data") or "<validation data required>"
+    return [
+        {
+            "name": "generic_adapter_audit",
+            "strategy": "adapter_required",
+            "purpose": (
+                f"识别到 {project} 模型请求，但当前 EdgeLite 只内置 YOLOv5/YOLOv8 真实执行 adapter。"
+                "需要提供模型加载、校准数据、评估指标、导出 ONNX/TensorRT 的项目接口。"
+            ),
+            "commands": [
+                "# 需要用户或项目 adapter 提供以下接口后才能真实执行：",
+                f"# 1. load_model: {model}",
+                f"# 2. eval_model: 使用验证数据 {data} 输出 baseline metric/latency",
+                "# 3. export_onnx: 导出静态或动态 shape ONNX",
+                "# 4. build_engine: 使用 trtexec/TensorRT Python 构建 engine",
+                "# 5. compress: 选择 PTQ/QAT/剪枝/蒸馏等策略并记录指标",
+            ],
+        },
+        {
+            "name": "generic_compression_plan",
+            "strategy": "generic",
+            "purpose": "通用压缩路线：先建立 dense baseline，再按硬件支持选择 PTQ/QAT/剪枝/蒸馏。",
+            "commands": [
+                "# Dense baseline: measure accuracy and latency on target validation data",
+                "# Export: convert model to ONNX with representative input shapes",
+                "# PTQ: collect calibration data and test INT8 accuracy drop",
+                "# QAT: insert fake quant/QDQ nodes and fine-tune if PTQ accuracy is not enough",
+                "# Pruning: apply structured pruning only if deployment backend supports the resulting graph",
+            ],
+        },
+    ]
+
+
 def build_plan(request: Dict[str, Any], workspace: Path) -> Dict[str, Any]:
     req = request_defaults(request)
     if req["project"] == "yolov8":
@@ -593,7 +945,7 @@ def build_plan(request: Dict[str, Any], workspace: Path) -> Dict[str, Any]:
     elif req["project"] == "yolov5":
         candidates = build_yolov5_candidates(req, workspace)
     else:
-        raise ValueError(f"unsupported project: {req['project']}")
+        candidates = build_generic_candidates(req, workspace)
 
     enabled = set(req.get("strategies", []))
     if enabled:
@@ -615,6 +967,7 @@ def build_plan(request: Dict[str, Any], workspace: Path) -> Dict[str, Any]:
                 "prefer sparsity 0.3 before 0.5 for YOLO pose workloads",
             ],
         },
+        "adapter": req.get("adapter", adapter_status(req["project"])),
         "candidates": candidates,
     }
 
@@ -688,6 +1041,7 @@ def commands_script(plan: Dict[str, Any]) -> str:
 def render_report(plan: Dict[str, Any], env: Dict[str, Any], evaluation: Dict[str, Any]) -> str:
     req = plan["request"]
     target = req["target"]
+    adapter = plan.get("adapter", req.get("adapter", {}))
     rows = []
     for r in evaluation.get("evaluated", []):
         rows.append(
@@ -712,6 +1066,18 @@ def render_report(plan: Dict[str, Any], env: Dict[str, Any], evaluation: Dict[st
 
     gpu = env.get("tools", {}).get("nvidia_smi", {}).get("stdout") or "not detected"
     trt = env.get("tools", {}).get("tensorrt", {}).get("stdout") or "not detected"
+    if req["project"] in {"yolov5", "yolov8"}:
+        operation_notes = (
+            "- 在生产交付场景里，优先使用目标 GPU 与目标 TensorRT 版本构建 engine。\n"
+            "- PTQ 如果超出精度预算，直接切换到 QAT。\n"
+            "- YOLOv8 姿态任务优先测试 0.3 稀疏度，再考虑更激进的剪枝。"
+        )
+    else:
+        operation_notes = (
+            "- 当前模型族未内置真实执行 adapter 时，只能输出通用计划和接口缺口。\n"
+            "- 真实压缩前需要补充 load/eval/export/build/compress 接口。\n"
+            "- 正式验收必须在目标硬件和真实验证集上重新测 baseline 与最终部署产物。"
+        )
 
     return f"""# EdgePilot 自动化压缩加速报告
 
@@ -727,6 +1093,7 @@ def render_report(plan: Dict[str, Any], env: Dict[str, Any], evaluation: Dict[st
 - 当前测试硬件: `{target.get('demo_hardware', target['hardware'])}`
 - 目标延迟: `<= {target['latency_ms_max']} ms` 或加速比 `>= {target['speedup_min']}x`
 - 目标精度损失: `<= {target['accuracy_drop_max_pct']}%`
+- Adapter: `{adapter.get('level', 'unknown')}` - {adapter.get('message', '')}
 
 ## 环境快照
 
@@ -755,9 +1122,7 @@ def render_report(plan: Dict[str, Any], env: Dict[str, Any], evaluation: Dict[st
 
 ## 操作说明
 
-- 在生产交付场景里，优先使用目标 GPU 与目标 TensorRT 版本构建 engine。
-- PTQ 如果超出精度预算，直接切换到 QAT。
-- YOLOv8 姿态任务优先测试 0.3 稀疏度，再考虑更激进的剪枝。
+{operation_notes}
 """
 
 
@@ -844,6 +1209,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
         create_venv=args.create_venv,
         install_deps=args.install_deps,
         prepare_demo_data=args.prepare_demo_data,
+        auto_download_assets=args.auto_download_assets,
         yes=args.yes,
     )
     print("已生成 bootstrap 产物：")
@@ -916,6 +1282,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_p.add_argument("--create-venv", action="store_true", help="Create .venv-edgepilot under the workspace.")
     bootstrap_p.add_argument("--install-deps", action="store_true", help="Install yolov5/yolov8 requirements. Requires --yes to execute.")
     bootstrap_p.add_argument("--prepare-demo-data", action="store_true", help="Create a tiny smoke-test dataset. Requires --yes to write files.")
+    bootstrap_p.add_argument("--auto-download-assets", action="store_true", help="Auto-resolve and download missing official model/data assets. Requires --yes to write files.")
     bootstrap_p.add_argument("--yes", action="store_true", help="Actually perform clone/env/install/data actions.")
     bootstrap_p.set_defaults(func=cmd_bootstrap)
 

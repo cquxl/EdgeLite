@@ -18,27 +18,38 @@
    - 若不存在，生成 clone 命令。
    - 只有用户明确允许时才执行 `git clone`。
 
-2. **选择 Python**
+2. **识别模型族与 adapter**
+   - YOLOv5/YOLOv8：当前仓库已内置真实执行 adapter。
+   - ViT、ResNet、BERT、LLM、扩散模型等：可做 bootstrap 和通用规划，但若项目未提供 adapter，必须提示缺口。
+   - 未知模型：要求用户提供模型加载、评估、导出和部署接口。
+
+3. **选择 Python**
    - 优先使用用户提供的 `--python-env`。
    - 其次使用当前激活 Python。
    - 若用户允许，可创建 `.venv-edgepilot`。
 
-3. **检查依赖**
+4. **检查依赖**
    - 检查 `torch`、`onnx`、`tensorrt`。
    - 检查 `trtexec` 是否在 PATH 中。
    - 不自动安装 CUDA/TensorRT；这通常需要管理员权限或匹配驱动版本。
    - `pip install -r requirements.txt` 必须有 `--install-deps --yes`。
 
-4. **检查模型**
+5. **检查模型**
    - 如果模型路径不存在，停止真实执行并要求用户提供权重。
-   - 不能自动编造模型文件。
+   - 先扫描仓库 README、yaml、txt 中与模型名相关的 URL。
+   - 再使用内置官方资源 registry，例如 Ultralytics YOLOv8 pose release 权重。
+   - 如果 registry 也没有命中，Codex 应联网搜索官方文档、GitHub Release 或官方 HuggingFace 页面，确认可信 URL 后再加入下载动作。
+   - 如果用户允许 `--auto-download-assets --yes`，可自动下载到 request 指定路径。
+   - 找不到可信 URL 时不能自动编造模型文件。
 
-5. **检查数据**
+6. **检查数据**
    - 真实精度评估必须使用用户数据集或任务匹配的公开数据。
-   - 若数据不存在，可创建 mini smoke-test 数据目录，用于验证流程能否跑通。
-   - mini 数据不能写入正式 mAP 或精度损失结论。
+   - 若数据不存在，先扫描项目配置中的 download 字段，再使用官方小样例数据 registry。
+   - registry 未命中时，Codex 应搜索官方 dataset 文档或官方 release 资源。
+   - YOLOv8 pose 默认可下载 Ultralytics COCO8-pose 小数据集用于 smoke test。
+   - mini/COCO8 数据不能写入正式 mAP 或精度损失结论。
 
-6. **进入压缩流程**
+7. **进入压缩流程**
    - 环境缺口解决后运行 `autopilot`。
    - 真实执行必须有 `--execute --yes`。
 
@@ -63,8 +74,20 @@ python edgelite-compression-agent/scripts/edgepilot.py \
   --repo-url https://github.com/cquxl/EdgeLite.git \
   --request request.json \
   --python-env /path/to/python \
+  --auto-download-assets \
   --install-deps \
   --prepare-demo-data \
+  --yes
+```
+
+只自动下载缺失模型/样例数据：
+
+```bash
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  bootstrap \
+  --request request.json \
+  --auto-download-assets \
   --yes
 ```
 
@@ -74,6 +97,21 @@ python edgelite-compression-agent/scripts/edgepilot.py \
 - `bootstrap.md`：给用户/交付方看的缺口报告。
 - `actions[]`：每个准备动作是否需要、是否执行、对应命令。
 - `warnings[]`：阻塞真实压缩的缺口。
+- `source` / `candidates`：模型或数据自动解析出的下载源。
+
+## 非 YOLO 模型 adapter 要求
+
+要真实执行任意深度学习模型压缩，项目至少需要提供：
+
+- `load_model`：加载权重和模型结构。
+- `prepare_calibration_data`：提供 PTQ/INT8 校准样本。
+- `evaluate`：输出统一精度指标，例如 accuracy、mAP、F1、perplexity。
+- `benchmark`：输出 latency、throughput、batch、硬件信息。
+- `export`：导出 ONNX/TorchScript 或目标部署格式。
+- `build_engine`：使用 TensorRT、ONNX Runtime、Torch-TensorRT 等构建部署产物。
+- `compress`：执行 PTQ、QAT、剪枝、蒸馏或低秩分解。
+
+如果这些接口不存在，Agent 只能输出通用压缩方案和缺口报告，不能声称已经完成真实压缩。
 
 ## 交付口径
 
