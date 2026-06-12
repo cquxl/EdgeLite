@@ -53,9 +53,13 @@
             <label><input type="checkbox" class="strategy" value="qat" checked /> INT8 QAT</label>
             <label><input type="checkbox" class="strategy" value="prune_qat" checked /> 剪枝+QAT</label>
           </div>
+          <div class="mode-box">
+            <label><input id="realSearch" type="checkbox" /> 真实执行候选搜索</label>
+            <p>默认快速演示使用历史/示例指标；勾选后会逐个执行候选命令，耗时可能很长，且不会伪造本次结果。</p>
+          </div>
           <div class="action-row">
             <button class="primary" id="runBtn"><svg><use href="#icon-play"></use></svg> 运行 Agent Demo</button>
-            <label class="execute-toggle"><input id="executeReal" type="checkbox" /> 执行真实重任务</label>
+            <span class="run-mode" id="runMode">快速演示模式</span>
           </div>
         </aside>
 
@@ -120,6 +124,17 @@
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head compact">
+              <svg><use href="#icon-code"></use></svg>
+              <div>
+                <h2>运行日志</h2>
+                <p>真实搜索模式下会持续输出当前执行命令与脚本日志</p>
+              </div>
+            </div>
+            <pre class="log-view" id="liveLog">等待启动任务</pre>
           </div>
         </section>
 

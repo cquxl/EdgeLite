@@ -190,15 +190,29 @@ input {
   margin-top: 12px;
 }
 
-.strategy-row label, .execute-toggle {
+.strategy-row label, .execute-toggle, .mode-box label {
   flex-direction: row;
   align-items: center;
   font-weight: 700;
 }
 
-.strategy-row input, .execute-toggle input {
+.strategy-row input, .execute-toggle input, .mode-box input {
   width: 16px;
   height: 16px;
+}
+
+.mode-box {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #f0d7a7;
+  border-radius: 8px;
+  background: #fff9ec;
+}
+
+.mode-box p {
+  margin-top: 6px;
+  color: #805600;
+  line-height: 1.45;
 }
 
 .action-row {
@@ -230,6 +244,19 @@ button {
 .primary:disabled {
   cursor: wait;
   background: #8096ba;
+}
+
+.run-mode {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: #3b4858;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .main-stack {
@@ -301,6 +328,11 @@ button {
   background: #f1f6ff;
 }
 
+.step.failed {
+  border-color: #ffc7c7;
+  background: #fff3f3;
+}
+
 .step-title {
   display: flex;
   align-items: center;
@@ -318,6 +350,7 @@ button {
 
 .done .dot { background: var(--green); }
 .running .dot { background: var(--blue); }
+.failed .dot { background: var(--red); }
 
 .step p {
   margin-top: 9px;
@@ -445,6 +478,13 @@ pre {
   background: #f8fafc;
   font-size: 12px;
   line-height: 1.55;
+}
+
+.log-view {
+  height: 230px;
+  color: #dce7f5;
+  background: #111827;
+  border-color: #1f2937;
 }
 
 @media (max-width: 1280px) {
