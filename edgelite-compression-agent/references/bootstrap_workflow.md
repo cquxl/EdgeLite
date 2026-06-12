@@ -39,6 +39,7 @@
    - 先扫描仓库 README、yaml、txt 中与模型名相关的 URL。
    - 再使用内置官方资源 registry，例如 Ultralytics YOLOv8 pose release 权重。
    - 如果 registry 也没有命中，Codex 应联网搜索官方文档、GitHub Release 或官方 HuggingFace 页面，确认可信 URL 后再加入下载动作。
+   - Hugging Face 自动解析只应采用官方或可信组织仓库；不要下载普通用户仓库里的 `optimizer.pt`、训练状态文件或来源不明权重。
    - 如果用户允许 `--auto-download-assets --yes`，可自动下载到 request 指定路径。
    - 找不到可信 URL 时不能自动编造模型文件。
 

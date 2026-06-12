@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime
@@ -55,6 +56,19 @@ SUPPORTED_ADAPTERS = {
 }
 
 KNOWN_MODEL_FAMILIES = {"vit", "resnet", "bert", "llama", "qwen", "deepseek", "ddpm", "stable-diffusion"}
+TRUSTED_HF_ORGS = {
+    "ultralytics",
+    "google",
+    "facebook",
+    "meta-llama",
+    "microsoft",
+    "openai",
+    "nvidia",
+    "timm",
+    "pytorch",
+    "huggingface",
+}
+BAD_WEIGHT_NAME_PARTS = {"optimizer", "scheduler", "trainer", "training_args", "scaler", "ema"}
 
 
 def now() -> str:
@@ -199,13 +213,106 @@ def find_urls_in_repo(root: Path, filename_hint: str) -> List[str]:
     return list(dict.fromkeys(urls))
 
 
-def first_available_url(urls: List[str], timeout: int = 10) -> Optional[str]:
-    for url in urls:
-        probe = run_probe(["curl", "-L", "-I", "--max-time", str(timeout), url], timeout=timeout + 5)
+def first_available_url(urls: List[str], timeout: int = 3) -> Optional[str]:
+    for url in urls[:3]:
+        probe = run_probe(
+            ["curl", "-sS", "-L", "-I", "--connect-timeout", "2", "--max-time", str(timeout), url],
+            timeout=timeout + 2,
+        )
         stdout = probe.get("stdout", "")
         if probe.get("ok") and (" 200 " in stdout or " 302 " in stdout):
             return url
     return urls[0] if urls else None
+
+
+def load_remote_json(url: str, timeout: int = 4) -> Optional[Any]:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return json.load(response)
+    except Exception:
+        return None
+
+
+def hf_model_urls(query: str, preferred_suffix: str = "") -> List[str]:
+    """Best-effort Hugging Face model search for official-ish weight files."""
+    if not query:
+        return []
+    search_url = "https://huggingface.co/api/models?search=" + urllib.parse.quote(query) + "&limit=5"
+    models = load_remote_json(search_url)
+    if not isinstance(models, list):
+        return []
+
+    def score_model(item: Dict[str, Any]) -> tuple:
+        model_id = item.get("modelId") or item.get("id") or ""
+        org = model_id.split("/", 1)[0].lower() if "/" in model_id else ""
+        trusted = 0 if org in TRUSTED_HF_ORGS else 1
+        downloads = -(int(item.get("downloads") or 0))
+        exact = 0 if query.lower().replace(".pt", "") in model_id.lower() else 1
+        return (trusted, exact, downloads)
+
+    urls: List[str] = []
+    canonical_weight_names = [
+        "pytorch_model.bin",
+        "model.safetensors",
+        "model.bin",
+        "tf_model.h5",
+        "flax_model.msgpack",
+    ]
+    query_tokens = [t for t in re.split(r"[^a-zA-Z0-9]+", query.lower()) if len(t) >= 3]
+
+    def is_probable_weight(name: str) -> bool:
+        base = Path(name).name.lower()
+        if any(part in base for part in BAD_WEIGHT_NAME_PARTS):
+            return False
+        if base in canonical_weight_names:
+            return True
+        if preferred_suffix and base == query.lower():
+            return True
+        if preferred_suffix and base.endswith(preferred_suffix.lower()):
+            return any(token in base for token in query_tokens) or "model" in base or "weight" in base
+        return False
+
+    for item in sorted(models, key=score_model)[:3]:
+        model_id = item.get("modelId") or item.get("id")
+        if not model_id:
+            continue
+        org = model_id.split("/", 1)[0].lower() if "/" in model_id else ""
+        if org not in TRUSTED_HF_ORGS:
+            continue
+        info = load_remote_json("https://huggingface.co/api/models/" + urllib.parse.quote(model_id, safe="/"))
+        if not isinstance(info, dict):
+            continue
+        siblings = [s.get("rfilename") for s in info.get("siblings", []) if s.get("rfilename")]
+        preferred = [name for name in siblings if is_probable_weight(name)]
+        for name in canonical_weight_names:
+            if name in siblings and name not in preferred:
+                preferred.append(name)
+        for name in preferred[:2]:
+            urls.append(f"https://huggingface.co/{model_id}/resolve/main/{urllib.parse.quote(name, safe='/')}")
+    return list(dict.fromkeys(urls))
+
+
+def hf_dataset_urls(query: str) -> List[str]:
+    """Return direct zip-like assets from Hugging Face datasets when present."""
+    if not query:
+        return []
+    search_url = "https://huggingface.co/api/datasets?search=" + urllib.parse.quote(query) + "&limit=3"
+    datasets = load_remote_json(search_url)
+    if not isinstance(datasets, list):
+        return []
+    urls: List[str] = []
+    for item in datasets[:2]:
+        dataset_id = item.get("id")
+        if not dataset_id:
+            continue
+        info = load_remote_json("https://huggingface.co/api/datasets/" + urllib.parse.quote(dataset_id, safe="/"))
+        if not isinstance(info, dict):
+            continue
+        for sibling in info.get("siblings", []):
+            name = sibling.get("rfilename")
+            if name and name.endswith((".zip", ".tar", ".tar.gz", ".tgz")):
+                urls.append(f"https://huggingface.co/datasets/{dataset_id}/resolve/main/{urllib.parse.quote(name, safe='/')}")
+    return list(dict.fromkeys(urls))
 
 
 def download_url(url: str, destination: Path, timeout: int = 1800) -> Dict[str, Any]:
@@ -258,6 +365,10 @@ def safe_extract_zip(zip_path: Path, destination: Path) -> None:
 
 
 def dataset_name_for_request(req: Dict[str, Any]) -> str:
+    if req.get("dataset_name"):
+        return str(req["dataset_name"])
+    if req.get("project") not in {"yolov5", "yolov8"}:
+        return ""
     if req.get("task") == "pose":
         return "coco8-pose"
     return "coco8"
@@ -333,12 +444,24 @@ def yaml_for_downloaded_dataset(project_root: Path, dataset_name: str) -> Path:
 def resolve_model_urls(project_root: Path, model_name: str) -> List[str]:
     urls = find_urls_in_repo(project_root, model_name)
     urls.extend(OFFICIAL_ASSET_REGISTRY["models"].get(model_name, []))
+    suffix = Path(model_name).suffix
+    query = Path(model_name).stem or model_name
+    normalized_query = query.lower().replace("_", "-")
+    if normalized_query.startswith("vit-base-patch16") or normalized_query.startswith("vit-base"):
+        urls.extend([
+            "https://huggingface.co/google/vit-base-patch16-224/resolve/main/model.safetensors",
+            "https://huggingface.co/google/vit-base-patch16-224/resolve/main/pytorch_model.bin",
+        ])
+    urls.extend(hf_model_urls(model_name, preferred_suffix=suffix))
+    if query != model_name:
+        urls.extend(hf_model_urls(query, preferred_suffix=suffix))
     return list(dict.fromkeys(urls))
 
 
 def resolve_dataset_urls(project_root: Path, dataset_name: str) -> List[str]:
     urls = find_urls_in_repo(project_root, dataset_name)
     urls.extend(OFFICIAL_ASSET_REGISTRY["datasets"].get(dataset_name, []))
+    urls.extend(hf_dataset_urls(dataset_name))
     return list(dict.fromkeys(urls))
 
 
@@ -486,21 +609,23 @@ def bootstrap_workspace(
     actions.append(model_action)
 
     dataset_name = dataset_name_for_request(normalized)
-    dataset_urls = resolve_dataset_urls(project_root, dataset_name)
+    dataset_urls = resolve_dataset_urls(project_root, dataset_name) if dataset_name else []
     selected_dataset_url = first_available_url(dataset_urls) if (missing["data_yaml"] or missing["calibration_data"]) and dataset_urls else None
-    dataset_zip = project_root / "datasets" / f"{dataset_name}.zip"
+    dataset_zip = project_root / "datasets" / f"{dataset_name or 'edgepilot-dataset'}.zip"
     dataset_action = {
         "name": "download_dataset",
         "needed": missing["data_yaml"] or missing["calibration_data"],
         "executed": False,
-        "target": str(project_root / "datasets" / dataset_name),
+        "target": str(project_root / "datasets" / dataset_name) if dataset_name else str(data_path),
         "source": selected_dataset_url,
         "candidates": dataset_urls,
-        "search_hint": f"{dataset_name} official YOLO dataset download",
-        "note": "默认下载小样例数据保证流程连通；正式精度验收仍需目标验证集。",
+        "search_hint": f"{dataset_name} official dataset download" if dataset_name else f"{normalized.get('data') or normalized.get('task')} official validation dataset download",
+        "note": "默认只为已知任务下载官方小样例数据；正式精度验收仍需目标验证集。",
     }
     if (missing["data_yaml"] or missing["calibration_data"]) and auto_download_assets:
-        if selected_dataset_url and yes:
+        if not dataset_name:
+            warnings.append("非 YOLO/未知数据集未配置 dataset_name，无法可靠自动下载数据；请提供 data 或 dataset_name。")
+        elif selected_dataset_url and yes:
             result = download_url(selected_dataset_url, dataset_zip)
             dataset_action.update({"download": result})
             if result["ok"]:

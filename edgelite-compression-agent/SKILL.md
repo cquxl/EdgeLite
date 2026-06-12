@@ -25,7 +25,7 @@ description: 从零准备并执行深度学习模型压缩与 TensorRT 加速；
 2. 先 bootstrap，再 plan/autopilot。不要直接假设依赖、数据、权重、TensorRT 都存在。
 3. Python 环境优先级：用户指定环境 > 当前激活环境 > 创建 `.venv-edgepilot`。安装依赖、创建环境、下载/写入数据必须得到明确允许。
 4. Adapter 策略：YOLOv5/YOLOv8 可真实执行；ViT、ResNet、LLM、DDPM 等若当前仓库无 adapter，应继续 bootstrap 和通用规划，但必须警告“缺少真实执行 adapter”，列出需要的 load/eval/export/build/compress 接口。
-5. 模型/数据策略：如果权重或数据缺失，先扫描仓库 README/yaml/txt 的下载链接，再使用内置官方 registry；仍找不到时，Codex 应联网查官方文档、GitHub Release 或官方 HuggingFace 页面，确认可信 URL 后再下载。不能确认官方来源时输出缺口而不是伪造资源。
+5. 模型/数据策略：如果权重或数据缺失，先扫描仓库 README/yaml/txt 的下载链接，再使用内置官方 registry；仍找不到时，Codex 应联网查官方文档、GitHub Release 或官方 HuggingFace 页面，确认可信 URL 后再下载。自动下载只接受官方或可信组织资源；不能确认官方来源时输出缺口而不是伪造资源。
 6. 数据策略：真实精度评估必须使用用户提供或任务匹配的正式验证集；官方 COCO8/COCO8-pose 小数据只能做流程 smoke test，不能作为验收 mAP 结论。
 7. 压缩顺序：Dense/PyTorch baseline -> FP16 TensorRT -> INT8 PTQ -> INT8 QAT -> 结构化剪枝+QAT。
 8. 姿态任务优先尝试 0.3 结构化剪枝；PTQ 超出精度预算时切换 QAT。
