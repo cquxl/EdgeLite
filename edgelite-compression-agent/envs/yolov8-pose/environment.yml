@@ -1,0 +1,6 @@
+name: yolov8-pose
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip

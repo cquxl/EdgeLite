@@ -25,6 +25,8 @@
 
 3. **选择 Python**
    - 优先使用用户提供的 `--python-env`。
+   - YOLOv8 真实执行优先使用 `conda` 环境 `yolov8-pose`。
+   - 如果新服务器没有 `yolov8-pose`，且用户允许安装，运行 `edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh --env-name yolov8-pose --yes`。
    - 其次使用当前激活 Python。
    - 若用户允许，可创建 `.venv-edgepilot`。
 
@@ -32,6 +34,7 @@
    - 检查 `torch`、`onnx`、`tensorrt`。
    - 检查 `trtexec` 是否在 PATH 中。
    - 不自动安装 CUDA/TensorRT；这通常需要管理员权限或匹配驱动版本。
+   - TensorRT Python wheel 和 `trtexec` 若来自本地 TensorRT tar 包，可通过 `setup_yolov8_pose_env.sh --tensorrt-dir /path/to/TensorRT-8.6.1.6 --yes` 写入环境。
    - `pip install -r requirements.txt` 必须有 `--install-deps --yes`。
 
 5. **检查模型**
@@ -56,6 +59,18 @@
    - 真实执行必须有 `--execute --yes`。
 
 ## Bootstrap 命令
+
+新服务器先准备 YOLOv8 真实执行环境：
+
+```bash
+bash edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh \
+  --env-name yolov8-pose \
+  --tensorrt-dir /path/to/TensorRT-8.6.1.6 \
+  --yes
+conda activate yolov8-pose
+```
+
+如果没有 TensorRT tar 目录，可以先不传 `--tensorrt-dir`；脚本会完成 Python 依赖安装，并在报告中提示 TensorRT/trtexec 缺口。
 
 只检查并生成缺口报告：
 
@@ -123,3 +138,9 @@ python edgelite-compression-agent/scripts/edgepilot.py \
 - **快速演示**：展示 Agent 规划和历史指标，不代表本次真实跑完。
 - **真实执行**：逐个执行命令、记录日志、由脚本产物更新指标。
 - **正式验收**：必须在目标硬件、目标 TensorRT 版本、真实验证集上跑 baseline 和最终 engine。
+
+## 环境打包策略
+
+- 推荐交付：`environment.yml`、`requirements-yolov8-pose.txt`、`setup_yolov8_pose_env.sh`。这种方式适合 A40/T4/L40 等不同服务器从零复建。
+- 可选内网迁移：`conda-pack`。只建议在 Linux/x86_64、驱动、CUDA、TensorRT 大版本兼容且路径可修复的机器之间使用。
+- 不建议把某台机器的完整环境当成唯一交付物；GPU 驱动、TensorRT tar、`trtexec` 和 CUDA runtime 往往与服务器绑定。

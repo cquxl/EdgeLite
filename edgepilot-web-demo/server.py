@@ -10,8 +10,10 @@ latency/accuracy results.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
+import site
 import subprocess
 import sys
 import threading
@@ -36,6 +38,31 @@ JOBS_LOCK = threading.Lock()
 DEFAULT_PROMPT = """我有一个 Yolov8 模型 pt 路径为 /data/xl/Projects/EdgeLite/yolov8/weights/yolov8s-pose.pt，想要压缩实现希望在 NVIDIA T4 GPU 上部署 YOLOv8s-pose 模型，用于姿态检测场景。
 
 要求在精度损失 <=1% 的前提下，将推理速度提升 >=2x。当前 demo 环境可以先用 NVIDIA L40 作为替代测试硬件。"""
+
+
+def edgepilot_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    candidates: list[Path] = []
+    site_roots: list[str] = []
+    try:
+        site_roots.extend(site.getsitepackages())
+    except Exception:
+        pass
+    try:
+        site_roots.append(site.getusersitepackages())
+    except Exception:
+        pass
+    for root in dict.fromkeys(site_roots):
+        nvidia_root = Path(root) / "nvidia"
+        if nvidia_root.exists():
+            candidates.extend(path for path in nvidia_root.glob("*/lib") if path.is_dir())
+
+    candidates = sorted(dict.fromkeys(candidates), key=lambda p: (0 if "nvjitlink" in str(p).lower() else 1, str(p)))
+    if candidates:
+        existing = env.get("LD_LIBRARY_PATH", "")
+        prefix = ":".join(str(path) for path in candidates)
+        env["LD_LIBRARY_PATH"] = f"{prefix}:{existing}" if existing else prefix
+    return env
 
 
 def extract_request(payload: dict, include_demo_metrics: bool) -> dict:
@@ -184,7 +211,15 @@ def run_edgepilot_plan(job_id: str, request_path: Path, run_dir: Path) -> None:
         str(run_dir),
     ]
     append_log(job_id, "$ " + " ".join(shlex.quote(x) for x in cmd) + "\n")
-    proc = subprocess.run(cmd, cwd=str(WORKSPACE), text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+    proc = subprocess.run(
+        cmd,
+        cwd=str(WORKSPACE),
+        env=edgepilot_subprocess_env(),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
     append_log(job_id, proc.stdout)
     if proc.returncode != 0:
         raise RuntimeError(f"edgepilot plan failed with exit code {proc.returncode}")
@@ -213,6 +248,7 @@ def execute_real_search(job_id: str, plan: dict) -> None:
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(cwd),
+                env=edgepilot_subprocess_env(),
                 shell=True,
                 executable="/bin/bash",
                 stdout=subprocess.PIPE,

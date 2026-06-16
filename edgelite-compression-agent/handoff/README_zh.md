@@ -59,6 +59,7 @@
 把真正干活的逻辑放进脚本里：
 
 - 环境检查
+- YOLOv8 `yolov8-pose` conda 环境从零安装
 - request 解析
 - 计划生成
 - 推荐选择
@@ -139,6 +140,7 @@ edgelite-compression-agent/
 │   ├── yolov8_workflow.md
 │   └── report_template.md
 └── scripts/
+    ├── setup_yolov8_pose_env.sh
     └── edgepilot.py
 ```
 
@@ -177,8 +179,17 @@ edgelite-compression-agent/
 推荐命令：
 
 ```bash
-python scripts/edgepilot.py autopilot \
-  --request assets/huawei_yolov8_pose_request.json \
+cd /path/to/EdgeLite
+bash edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh \
+  --env-name yolov8-pose \
+  --tensorrt-dir /path/to/TensorRT-8.6.1.6 \
+  --yes
+conda activate yolov8-pose
+
+python edgelite-compression-agent/scripts/edgepilot.py \
+  --workspace /path/to/EdgeLite \
+  autopilot \
+  --request edgelite-compression-agent/assets/huawei_yolov8_pose_request.json \
   --output edgepilot_autopilot_run \
   --execute --yes
 ```

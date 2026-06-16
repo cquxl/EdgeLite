@@ -23,7 +23,7 @@ description: 从零准备并执行深度学习模型压缩与 TensorRT 加速；
 
 1. 先定位 workspace。若没有 `yolov5/`、`yolov8/` 或 `edgelite-compression-agent/`，先建议或执行 clone。
 2. 先 bootstrap，再 plan/autopilot。不要直接假设依赖、数据、权重、TensorRT 都存在。
-3. Python 环境优先级：用户指定环境 > 当前激活环境 > 创建 `.venv-edgepilot`。安装依赖、创建环境、下载/写入数据必须得到明确允许。
+3. Python 环境优先级：用户指定环境 > YOLOv8 默认 `conda` 环境 `yolov8-pose` > 当前激活环境 > 创建 `.venv-edgepilot`。安装依赖、创建环境、下载/写入数据必须得到明确允许。
 4. Adapter 策略：YOLOv5/YOLOv8 可真实执行；ViT、ResNet、LLM、DDPM 等若当前仓库无 adapter，应继续 bootstrap 和通用规划，但必须警告“缺少真实执行 adapter”，列出需要的 load/eval/export/build/compress 接口。
 5. 模型/数据策略：如果权重或数据缺失，先扫描仓库 README/yaml/txt 的下载链接，再使用内置官方 registry；仍找不到时，Codex 应联网查官方文档、GitHub Release 或官方 HuggingFace 页面，确认可信 URL 后再下载。自动下载只接受官方或可信组织资源；不能确认官方来源时输出缺口而不是伪造资源。
 6. 数据策略：真实精度评估必须使用用户提供或任务匹配的正式验证集；官方 COCO8/COCO8-pose 小数据只能做流程 smoke test，不能作为验收 mAP 结论。
@@ -31,6 +31,40 @@ description: 从零准备并执行深度学习模型压缩与 TensorRT 加速；
 8. 姿态任务优先尝试 0.3 结构化剪枝；PTQ 超出精度预算时切换 QAT。
 9. 没有真实指标时只输出计划、命令和风险，不把 demo 指标说成本次结果。
 10. 执行训练、剪枝、导出 engine、安装依赖、下载资源等重任务前，必须有明确执行许可，例如 `--yes` 或用户明确说“执行真实流程/自动下载”。
+
+## YOLOv8 环境安装
+
+YOLOv8 真实执行前，先检查是否存在已验证环境：
+
+```bash
+conda env list | grep yolov8-pose
+```
+
+如果新服务器没有该环境，且用户允许自动安装，先运行：
+
+```bash
+bash edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh \
+  --env-name yolov8-pose \
+  --yes
+```
+
+如果服务器已有 TensorRT 8.6.1.6 解压目录，传入：
+
+```bash
+bash edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh \
+  --env-name yolov8-pose \
+  --tensorrt-dir /path/to/TensorRT-8.6.1.6 \
+  --yes
+```
+
+安装完成后，真实执行 demo 或候选搜索应使用该环境启动：
+
+```bash
+conda activate yolov8-pose
+python edgepilot-web-demo/server.py --host 0.0.0.0 --port 7860
+```
+
+说明：`conda-pack` 只适合同 Linux/x86_64、CUDA/驱动/TensorRT 大版本兼容的内网迁移；面向 A40/T4/L40 等不同服务器交付时，默认使用 `environment.yml + requirements-yolov8-pose.txt + setup_yolov8_pose_env.sh` 从零复建。
 
 ## 标准流程
 
