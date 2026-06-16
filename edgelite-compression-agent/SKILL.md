@@ -29,8 +29,9 @@ description: 从零准备并执行深度学习模型压缩与 TensorRT 加速；
 6. 数据策略：真实精度评估必须使用用户提供或任务匹配的正式验证集；官方 COCO8/COCO8-pose 小数据只能做流程 smoke test，不能作为验收 mAP 结论。
 7. 压缩顺序：Dense/PyTorch baseline -> FP16 TensorRT -> INT8 PTQ -> INT8 QAT -> 结构化剪枝+QAT。
 8. 姿态任务优先尝试 0.3 结构化剪枝；PTQ 超出精度预算时切换 QAT。
-9. 没有真实指标时只输出计划、命令和风险，不把 demo 指标说成本次结果。
-10. 执行训练、剪枝、导出 engine、安装依赖、下载资源等重任务前，必须有明确执行许可，例如 `--yes` 或用户明确说“执行真实流程/自动下载”。
+9. YOLOv8 必须导入仓库内 `yolov8/ultralytics`，不要用 pip 官方 `ultralytics` 替代，因为项目可能修改过源码。候选命令应先 `cd yolov8`，安装脚本也会校验 `ultralytics.__file__`。
+10. 没有真实指标时只输出计划、命令和风险，不把 demo 指标说成本次结果。
+11. 执行训练、剪枝、导出 engine、安装依赖、下载资源等重任务前，必须有明确执行许可，例如 `--yes` 或用户明确说“执行真实流程/自动下载”。
 
 ## YOLOv8 环境安装
 
@@ -65,6 +66,8 @@ python edgepilot-web-demo/server.py --host 0.0.0.0 --port 7860
 ```
 
 说明：`conda-pack` 只适合同 Linux/x86_64、CUDA/驱动/TensorRT 大版本兼容的内网迁移；面向 A40/T4/L40 等不同服务器交付时，默认使用 `environment.yml + requirements-yolov8-pose.txt + setup_yolov8_pose_env.sh` 从零复建。
+
+注意：`requirements-yolov8-pose.txt` 不安装 pip 官方 `ultralytics`。新服务器 clone EdgeLite 后，真实执行时通过 `cd yolov8` 让 Python 优先导入项目内的 `yolov8/ultralytics`。
 
 ## 标准流程
 

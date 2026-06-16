@@ -4,6 +4,7 @@ set -euo pipefail
 ENV_NAME="${ENV_NAME:-yolov8-pose}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+WORKSPACE="$(cd "${SKILL_DIR}/.." && pwd)"
 ENV_DIR="${SKILL_DIR}/envs/yolov8-pose"
 ENV_FILE="${ENV_DIR}/environment.yml"
 REQ_FILE="${ENV_DIR}/requirements-yolov8-pose.txt"
@@ -29,6 +30,8 @@ Notes:
   - This creates a reproducible Python environment. NVIDIA driver and system CUDA
     compatibility must already be handled by the server/container.
   - TensorRT Python/trtexec is installed from --tensorrt-dir when provided.
+  - Ultralytics is intentionally imported from EdgeLite/yolov8/ultralytics, not
+    from the public pip package, because this project carries local changes.
 EOF
 }
 
@@ -142,7 +145,7 @@ fi
 echo "[verify] runtime imports"
 python - <<'PY'
 import importlib
-mods = ["torch", "torchvision", "cv2", "onnx", "onnxsim", "pycuda", "ultralytics"]
+mods = ["torch", "torchvision", "cv2", "onnx", "onnxsim", "pycuda"]
 for name in mods:
     mod = importlib.import_module(name)
     print(name, getattr(mod, "__version__", "available"))
@@ -154,6 +157,25 @@ except Exception as exc:
 import torch
 print("cuda", torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else "-")
 PY
+
+if [[ -d "${WORKSPACE}/yolov8/ultralytics" ]]; then
+  echo "[verify] local EdgeLite Ultralytics"
+  (
+    cd "${WORKSPACE}/yolov8"
+    python - <<'PY'
+from pathlib import Path
+import ultralytics
+
+actual = Path(ultralytics.__file__).resolve()
+expected = Path.cwd().resolve() / "ultralytics"
+print("ultralytics", getattr(ultralytics, "__version__", "available"), actual)
+if expected not in actual.parents:
+    raise SystemExit(f"expected local EdgeLite ultralytics under {expected}, got {actual}")
+PY
+  )
+else
+  echo "[warn] ${WORKSPACE}/yolov8/ultralytics not found; clone/integrate EdgeLite yolov8 before real YOLOv8 execution."
+fi
 
 if command -v trtexec >/dev/null 2>&1; then
   echo "[verify] trtexec: $(command -v trtexec)"

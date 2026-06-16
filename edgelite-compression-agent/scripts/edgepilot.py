@@ -155,6 +155,22 @@ def python_module_version(module: str) -> Dict[str, Any]:
     return run_probe([sys.executable, "-c", code])
 
 
+def local_ultralytics_probe(workspace: Path) -> Dict[str, Any]:
+    yolov8_root = workspace / "yolov8"
+    if not yolov8_root.exists():
+        return {"ok": False, "error": "yolov8 project not found", "stdout": "", "stderr": ""}
+    code = (
+        "from pathlib import Path\n"
+        "import ultralytics\n"
+        "actual = Path(ultralytics.__file__).resolve()\n"
+        "expected = Path.cwd().resolve() / 'ultralytics'\n"
+        "print(actual)\n"
+        "print(getattr(ultralytics, '__version__', 'available'))\n"
+        "raise SystemExit(0 if expected in actual.parents else 2)\n"
+    )
+    return run_probe([sys.executable, "-c", code], cwd=yolov8_root)
+
+
 def compact_stdout(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -203,6 +219,7 @@ def inspect_environment(workspace: Path) -> Dict[str, Any]:
             "torch": python_module_version("torch"),
             "tensorrt": python_module_version("tensorrt"),
             "onnx": python_module_version("onnx"),
+            "local_ultralytics": local_ultralytics_probe(workspace),
         },
         "projects": projects,
     }

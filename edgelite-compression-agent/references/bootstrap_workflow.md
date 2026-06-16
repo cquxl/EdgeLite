@@ -27,12 +27,14 @@
    - 优先使用用户提供的 `--python-env`。
    - YOLOv8 真实执行优先使用 `conda` 环境 `yolov8-pose`。
    - 如果新服务器没有 `yolov8-pose`，且用户允许安装，运行 `edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh --env-name yolov8-pose --yes`。
+   - YOLOv8 不应通过 pip 官方 `ultralytics` 包作为执行源码；必须从当前仓库 `yolov8/ultralytics` 导入，以保留项目内修改。
    - 其次使用当前激活 Python。
    - 若用户允许，可创建 `.venv-edgepilot`。
 
 4. **检查依赖**
    - 检查 `torch`、`onnx`、`tensorrt`。
    - 检查 `trtexec` 是否在 PATH 中。
+   - 检查 `cd yolov8 && python -c "import ultralytics; print(ultralytics.__file__)"` 是否指向 `EdgeLite/yolov8/ultralytics`。
    - 不自动安装 CUDA/TensorRT；这通常需要管理员权限或匹配驱动版本。
    - TensorRT Python wheel 和 `trtexec` 若来自本地 TensorRT tar 包，可通过 `setup_yolov8_pose_env.sh --tensorrt-dir /path/to/TensorRT-8.6.1.6 --yes` 写入环境。
    - `pip install -r requirements.txt` 必须有 `--install-deps --yes`。
