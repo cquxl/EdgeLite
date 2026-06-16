@@ -17,7 +17,7 @@
 
 这个项目面向华为的深度学习模型压缩与加速需求，核心场景是：
 
-- 模型：YOLOv8s-pose，后续扩展到 YOLOv5
+- 模型：YOLOv8s-pose 与 YOLOv5 检测任务
 - 硬件：NVIDIA T4，开发/调试环境可能是 L40
 - 目标：在精度损失不超过 1% 的前提下，把推理速度提升到 2x 以上
 - 工具链：PyTorch、ONNX、TensorRT、CUDA、QAT、PTQ、结构化剪枝、知识蒸馏
@@ -211,4 +211,3 @@ python scripts/edgepilot.py autopilot \
 - 能把流程复现出来
 - 能在报告里解释速度和精度取舍
 - 能继续扩展到别的模型和别的硬件
-

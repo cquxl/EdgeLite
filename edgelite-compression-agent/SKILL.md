@@ -67,6 +67,7 @@ python edgelite-compression-agent/scripts/edgepilot.py \
 
 - `bootstrap.json`
 - `bootstrap.md`
+- `resolved_request.json`：bootstrap 规范化后的请求，包含自动下载/解压后的模型、数据和校准集路径。后续 `autopilot` 应优先使用这个文件，而不是原始 request。
 
 如果没有模型或数据，推荐先让 bootstrap 自动解析并下载官方资源：
 
@@ -95,7 +96,7 @@ python edgelite-compression-agent/scripts/edgepilot.py \
 python edgelite-compression-agent/scripts/edgepilot.py \
   --workspace /path/to/EdgeLite \
   autopilot \
-  --request request.json \
+  --request edgepilot_bootstrap_run/resolved_request.json \
   --output edgepilot_autopilot_run
 ```
 
@@ -105,7 +106,7 @@ python edgelite-compression-agent/scripts/edgepilot.py \
 python edgelite-compression-agent/scripts/edgepilot.py \
   --workspace /path/to/EdgeLite \
   autopilot \
-  --request request.json \
+  --request edgepilot_bootstrap_run/resolved_request.json \
   --output edgepilot_autopilot_run \
   --execute --yes
 ```

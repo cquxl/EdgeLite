@@ -51,7 +51,8 @@
    - mini/COCO8 数据不能写入正式 mAP 或精度损失结论。
 
 7. **进入压缩流程**
-   - 环境缺口解决后运行 `autopilot`。
+   - 环境缺口解决后，优先使用 bootstrap 产出的 `resolved_request.json` 运行 `autopilot`。
+   - 不要在自动下载/解压后继续使用原始 request；原始路径可能仍指向不存在的模型或数据。
    - 真实执行必须有 `--execute --yes`。
 
 ## Bootstrap 命令
@@ -96,6 +97,7 @@ python edgelite-compression-agent/scripts/edgepilot.py \
 
 - `bootstrap.json`：机器可读环境检查结果。
 - `bootstrap.md`：给用户/交付方看的缺口报告。
+- `resolved_request.json`：路径规范化后的请求文件，包含已下载模型、已解压数据和校准集路径，后续 `autopilot` 应使用它。
 - `actions[]`：每个准备动作是否需要、是否执行、对应命令。
 - `warnings[]`：阻塞真实压缩的缺口。
 - `source` / `candidates`：模型或数据自动解析出的下载源。

@@ -12,21 +12,48 @@ import math
 from loguru import logger
 import sys
 
+os.environ.setdefault('CUDA_MODULE_LOADING', 'LAZY')
 
 
 # === GPU / TRT ===
 import tensorrt as trt
 import pycuda.driver as cuda
-import pycuda.autoinit  # 初始化 CUDA 上下文
 
 BASE_DIR = Path(__file__).resolve().parent
-os.environ['CUDA_MODULE_LOADING'] = 'LAZY'
 
 tensorrt_version = trt.__version__
 major_version = int(tensorrt_version.split('.')[0])
 minor_version = int(tensorrt_version.split('.')[1])
-device = torch.cuda.current_device()
-total_memory = torch.cuda.get_device_properties(device).total_memory
+device = torch.device('cuda:0')
+_PYCUDA_AUTOINIT = None
+
+
+def ensure_cuda_context(cuda_device: Optional[Union[str, torch.device, int]] = None) -> None:
+    """Initialize CUDA/PyCUDA lazily so importing this module does not require a live GPU."""
+    global _PYCUDA_AUTOINIT
+
+    torch_device = torch.device(cuda_device) if cuda_device is not None else device
+    device_index = torch_device.index if torch_device.index is not None else 0
+
+    try:
+        cuda.init()
+        if cuda.Device.count() <= device_index:
+            raise RuntimeError(
+                f"CUDA device {device_index} is not visible to PyCUDA "
+                f"(visible device count: {cuda.Device.count()})."
+            )
+        torch.cuda.set_device(device_index)
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA is not available to PyTorch.")
+        if _PYCUDA_AUTOINIT is None:
+            import pycuda.autoinit as pycuda_autoinit
+            _PYCUDA_AUTOINIT = pycuda_autoinit
+    except Exception as exc:
+        raise RuntimeError(
+            "CUDA initialization failed before TensorRT inference. "
+            "Please check `nvidia-smi`, NVIDIA driver status, container GPU access, "
+            "and CUDA_VISIBLE_DEVICES."
+        ) from exc
 
 def setup_logger(log_name, save_dir):
     filename = '%s.log' % log_name
@@ -60,7 +87,8 @@ class TRTModule(torch.nn.Module):
         super(TRTModule, self).__init__()
         self.weight = Path(weight) if isinstance(weight, str) else weight
         self.device = device if device is not None else torch.device('cuda:0')
-        self.stream = torch.cuda.Stream(device=self.device)
+        ensure_cuda_context(self.device)
+        self.stream = cuda.Stream()
         self.__init_engine()
 
     def print_bindings(self, engine):
@@ -222,6 +250,7 @@ class TRTModule1(torch.nn.Module):
         super().__init__()
         self.weight = Path(weight) if isinstance(weight, str) else weight
         self.device = device if device is not None else torch.device('cuda:0')
+        ensure_cuda_context(self.device)
         # stream 用 pycuda 的 stream，所有 memcpy/execute 都用同一个 stream，以便减少同步开销
         self.stream = cuda.Stream()
         self.model = None

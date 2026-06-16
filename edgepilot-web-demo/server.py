@@ -55,17 +55,34 @@ def extract_request(payload: dict, include_demo_metrics: bool) -> dict:
     drop_match = re.search(r"(?:<=|≤|不超过)\s*([0-9]+(?:\.[0-9]+)?)\s*%", prompt)
     project = form.get("project") or ("yolov5" if "yolov5" in str(model_path).lower() else "yolov8")
     task = form.get("task") or ("pose" if "pose" in prompt.lower() or "姿态" in prompt else "detect")
+    if project == "yolov5":
+        default_data = "data/coco.yaml"
+        default_output = "output/edgepilot-web-huawei-yolov5-detect"
+        default_calibration = "datasets/coco/images/train2017"
+        default_train = default_calibration
+        default_val = "datasets/coco/images/val2017"
+        default_metric = "mAP50"
+        default_accuracy = 56.8
+    else:
+        default_data = "datasets/my-coco-pose.yaml"
+        default_output = "output/edgepilot-web-huawei-yolov8-pose"
+        default_calibration = "datasets/coco-pose/images/train2017"
+        default_train = default_calibration
+        default_val = "datasets/coco-pose/images/val2017"
+        default_metric = "mAP50(P)" if task == "pose" else "mAP50"
+        default_accuracy = 85.6
 
     request = {
         "project": project,
         "task": task,
         "model": model,
-        "data": form.get("dataYaml") or ("datasets/my-coco-pose.yaml" if project == "yolov8" else "data/coco.yaml"),
-        "output_dir": "output/edgepilot-web-huawei-yolov8-pose",
-        "calibration_data": form.get("calibrationData") or "datasets/coco-pose/images/train2017",
+        "data": form.get("dataYaml") or default_data,
+        "output_dir": form.get("outputDir") or default_output,
+        "calibration_data": form.get("calibrationData") or default_calibration,
         "calibration_size": int(form.get("calibrationSize") or 5000),
-        "train_images": form.get("trainImages") or "datasets/coco-pose/images/train2017",
-        "val_images": form.get("valImages") or "datasets/coco-pose/images/val2017",
+        "train_images": form.get("trainImages") or default_train,
+        "val_images": form.get("valImages") or default_val,
+        "coco_dir": form.get("cocoDir") or "datasets/coco",
         "runtime": {
             "device": form.get("device") or "cuda:0",
             "imgsz": int(form.get("imgsz") or 640),
@@ -76,9 +93,9 @@ def extract_request(payload: dict, include_demo_metrics: bool) -> dict:
         "target": {
             "hardware": form.get("targetHardware") or "NVIDIA T4",
             "demo_hardware": form.get("demoHardware") or "NVIDIA L40",
-            "metric": form.get("metric") or ("mAP50(P)" if task == "pose" else "mAP50"),
+            "metric": form.get("metric") or default_metric,
             "baseline_latency_ms": float(form.get("baselineLatency") or 10.0),
-            "baseline_accuracy": float(form.get("baselineAccuracy") or 85.6),
+            "baseline_accuracy": float(form.get("baselineAccuracy") or default_accuracy),
             "latency_ms_max": float(form.get("latencyMax") or 5.0),
             "speedup_min": float(form.get("speedupMin") or (speedup_match.group(1) if speedup_match else 2.0)),
             "accuracy_drop_max_pct": float(form.get("accuracyDropMax") or (drop_match.group(1) if drop_match else 1.0)),
@@ -89,13 +106,22 @@ def extract_request(payload: dict, include_demo_metrics: bool) -> dict:
         "prune_epochs": int(form.get("pruneEpochs") or 120),
     }
     if include_demo_metrics:
-        request["demo_metrics"] = [
-            {"name": "dense_pytorch_baseline", "strategy": "dense", "latency_ms": 10.0, "accuracy": 85.6},
-            {"name": "fp16_trt_baseline", "strategy": "fp16", "latency_ms": 10.0, "accuracy": 85.6},
-            {"name": "int8_ptq", "strategy": "ptq", "latency_ms": 4.6, "accuracy": 83.6},
-            {"name": "int8_qat", "strategy": "qat", "latency_ms": 4.9, "accuracy": 85.4},
-            {"name": "prune_0_3_qat", "strategy": "prune_qat", "latency_ms": 4.2, "accuracy": 84.9},
-        ]
+        if project == "yolov5":
+            request["demo_metrics"] = [
+                {"name": "dense_pytorch_baseline", "strategy": "dense", "latency_ms": 10.0, "accuracy": 56.8},
+                {"name": "fp16_trt_baseline", "strategy": "fp16", "latency_ms": 7.2, "accuracy": 56.7},
+                {"name": "int8_ptq", "strategy": "ptq", "latency_ms": 4.8, "accuracy": 55.4},
+                {"name": "int8_qat", "strategy": "qat", "latency_ms": 5.0, "accuracy": 56.3},
+                {"name": "prune_0_3_qat", "strategy": "prune_qat", "latency_ms": 4.3, "accuracy": 56.0},
+            ]
+        else:
+            request["demo_metrics"] = [
+                {"name": "dense_pytorch_baseline", "strategy": "dense", "latency_ms": 10.0, "accuracy": 85.6},
+                {"name": "fp16_trt_baseline", "strategy": "fp16", "latency_ms": 10.0, "accuracy": 85.6},
+                {"name": "int8_ptq", "strategy": "ptq", "latency_ms": 4.6, "accuracy": 83.6},
+                {"name": "int8_qat", "strategy": "qat", "latency_ms": 4.9, "accuracy": 85.4},
+                {"name": "prune_0_3_qat", "strategy": "prune_qat", "latency_ms": 4.2, "accuracy": 84.9},
+            ]
     return request
 
 

@@ -709,12 +709,22 @@ def bootstrap_workspace(
     if not trt_available:
         warnings.append("未检测到 TensorRT/trtexec。可先规划策略，但真实 engine 构建和延迟测试会失败。")
 
+    bootstrap_path = output_dir / "bootstrap.json"
+    bootstrap_report_path = output_dir / "bootstrap.md"
+    resolved_request_path = output_dir / "resolved_request.json"
+    write_json(resolved_request_path, normalized)
+
     bootstrap = {
         "generated_at": now(),
         "workspace": str(workspace),
         "repo_url": repo_url,
         "python": py,
         "request": normalized,
+        "artifacts": {
+            "bootstrap": str(bootstrap_path),
+            "report": str(bootstrap_report_path),
+            "resolved_request": str(resolved_request_path),
+        },
         "checks": {
             "layout_ready": has_edgelite_layout(workspace),
             "model_path": str(model_path),
@@ -728,8 +738,8 @@ def bootstrap_workspace(
         "warnings": warnings,
         "env": env,
     }
-    write_json(output_dir / "bootstrap.json", bootstrap)
-    (output_dir / "bootstrap.md").write_text(render_bootstrap_report(bootstrap), encoding="utf-8")
+    write_json(bootstrap_path, bootstrap)
+    bootstrap_report_path.write_text(render_bootstrap_report(bootstrap), encoding="utf-8")
     return bootstrap
 
 
@@ -764,6 +774,8 @@ def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
             source_lines.append(f"- {action['name']}: 未找到直接 URL；建议搜索 `{action['search_hint']}`")
     sources = "\n".join(source_lines) or "- 无"
     req = bootstrap["request"]
+    artifacts = bootstrap.get("artifacts", {})
+    resolved_request = artifacts.get("resolved_request", "edgepilot_bootstrap_run/resolved_request.json")
     return f"""# EdgePilot Bootstrap 报告
 
 生成时间: {bootstrap['generated_at']}
@@ -808,7 +820,16 @@ def render_bootstrap_report(bootstrap: Dict[str, Any]) -> str:
 ## 下一步
 
 1. 解决缺失的模型、数据、TensorRT 或 Python 依赖。
-2. 运行 `edgepilot.py autopilot` 生成候选压缩方案。
+2. 使用 bootstrap 产出的 `resolved_request.json` 运行 `edgepilot.py autopilot`，确保自动下载/解压后的路径被后续流程使用：
+
+```bash
+python edgelite-compression-agent/scripts/edgepilot.py \\
+  --workspace {bootstrap['workspace']} \\
+  autopilot \\
+  --request {resolved_request} \\
+  --output edgepilot_autopilot_run
+```
+
 3. 只有在确认数据和环境后，才加 `--execute --yes` 执行训练、剪枝和 TensorRT 构建。
 """
 
@@ -983,6 +1004,27 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
             ],
         },
         {
+            "name": "int8_ptq",
+            "strategy": "ptq",
+            "purpose": "Calibrate YOLOv5 INT8 PTQ and export the calibrated checkpoint to ONNX/TensorRT.",
+            "commands": [
+                sh_cd(workspace, "yolov5"),
+                (
+                    "python scripts/qat.py quantize "
+                    f"{model} --cocodir {cocodir} --device {rt['device']} "
+                    f"--ptq {out}/ptq.pt --eval-origin --eval-ptq"
+                ),
+                f"python scripts/qat.py export {out}/ptq.pt --save {out}/ptq.onnx --size {imgsz} --dynamic",
+                (
+                    "trtexec "
+                    f"--onnx={out}/ptq.onnx --saveEngine={out}/ptq.engine --int8 --fp16 "
+                    f"--minShapes=images:{batch_min}x3x{imgsz}x{imgsz} "
+                    f"--optShapes=images:{batch}x3x{imgsz}x{imgsz} "
+                    f"--maxShapes=images:{batch_max}x3x{imgsz}x{imgsz}"
+                ),
+            ],
+        },
+        {
             "name": "int8_qat",
             "strategy": "qat",
             "purpose": "Run YOLOv5 QAT and export the QAT checkpoint to ONNX/TensorRT.",
@@ -1129,6 +1171,9 @@ def evaluate_results(request: Dict[str, Any]) -> Dict[str, Any]:
     if accepted:
         recommended = sorted(accepted, key=lambda r: (r["latency_ms"], -r["accuracy"]))[0]
         reason = "在满足速度与精度约束的候选中，选择延迟最低的方案。"
+    elif not evaluated:
+        recommended = None
+        reason = "未提供本次候选指标；请先运行候选或提供 metrics/demo_metrics。"
     else:
         recommended = sorted(
             evaluated,
@@ -1191,11 +1236,17 @@ def render_report(plan: Dict[str, Any], env: Dict[str, Any], evaluation: Dict[st
 
     gpu = env.get("tools", {}).get("nvidia_smi", {}).get("stdout") or "not detected"
     trt = env.get("tools", {}).get("tensorrt", {}).get("stdout") or "not detected"
-    if req["project"] in {"yolov5", "yolov8"}:
+    if req["project"] == "yolov8":
         operation_notes = (
             "- 在生产交付场景里，优先使用目标 GPU 与目标 TensorRT 版本构建 engine。\n"
             "- PTQ 如果超出精度预算，直接切换到 QAT。\n"
             "- YOLOv8 姿态任务优先测试 0.3 稀疏度，再考虑更激进的剪枝。"
+        )
+    elif req["project"] == "yolov5":
+        operation_notes = (
+            "- 在生产交付场景里，优先使用目标 GPU 与目标 TensorRT 版本构建 engine。\n"
+            "- YOLOv5 检测任务先跑 FP16 与 PTQ；PTQ 精度损失超标时切换 QAT。\n"
+            "- 若速度仍不达标，再使用结构化剪枝后接 QAT 恢复精度。"
         )
     else:
         operation_notes = (
@@ -1286,13 +1337,22 @@ def execute_candidate(plan_path: Path, candidate_name: str, log_path: Path) -> N
     if candidate_name not in candidates:
         raise SystemExit(f"candidate not found: {candidate_name}")
 
+    cwd = plan_path.parent
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("w", encoding="utf-8") as log:
         for cmd in candidates[candidate_name]["commands"]:
             log.write(f"\n$ {cmd}\n")
             log.flush()
+            if cmd.strip().startswith("cd "):
+                parts = shlex.split(cmd)
+                if len(parts) >= 2:
+                    cwd = Path(parts[1]).expanduser().resolve()
+                    log.write(f"[cwd] {cwd}\n")
+                    log.flush()
+                continue
             proc = subprocess.Popen(
                 cmd,
+                cwd=str(cwd),
                 shell=True,
                 executable="/bin/bash",
                 stdout=subprocess.PIPE,
@@ -1340,6 +1400,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     print("已生成 bootstrap 产物：")
     print(f"bootstrap: {Path(args.output).resolve() / 'bootstrap.json'}")
     print(f"report: {Path(args.output).resolve() / 'bootstrap.md'}")
+    print(f"resolved_request: {Path(args.output).resolve() / 'resolved_request.json'}")
     if result.get("warnings"):
         print("风险与缺口：")
         for warning in result["warnings"]:
