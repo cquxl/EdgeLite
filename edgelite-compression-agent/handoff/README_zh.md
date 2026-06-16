@@ -60,6 +60,7 @@
 
 - 环境检查
 - YOLOv8 `yolov8-pose` conda 环境从零安装
+- YOLOv5 `yolov5-compress` conda 环境从零安装
 - request 解析
 - 计划生成
 - 推荐选择
@@ -185,6 +186,12 @@ bash edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh \
   --tensorrt-dir /path/to/TensorRT-8.6.1.6 \
   --yes
 conda activate yolov8-pose
+
+# 如果运行 YOLOv5，使用独立环境，不要复用 yolov8-pose
+bash edgelite-compression-agent/scripts/setup_yolov5_env.sh \
+  --env-name yolov5-compress \
+  --tensorrt-dir /path/to/TensorRT-8.6.1.6 \
+  --yes
 
 python edgelite-compression-agent/scripts/edgepilot.py \
   --workspace /path/to/EdgeLite \

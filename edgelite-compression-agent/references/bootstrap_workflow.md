@@ -28,6 +28,9 @@
    - YOLOv8 真实执行优先使用 `conda` 环境 `yolov8-pose`。
    - 如果新服务器没有 `yolov8-pose`，且用户允许安装，运行 `edgelite-compression-agent/scripts/setup_yolov8_pose_env.sh --env-name yolov8-pose --yes`。
    - YOLOv8 不应通过 pip 官方 `ultralytics` 包作为执行源码；必须从当前仓库 `yolov8/ultralytics` 导入，以保留项目内修改。
+   - YOLOv5 真实执行使用独立 `conda` 环境 `yolov5-compress`，不能复用 `yolov8-pose`。
+   - 如果新服务器没有 `yolov5-compress`，且用户允许安装，运行 `edgelite-compression-agent/scripts/setup_yolov5_env.sh --env-name yolov5-compress --yes`。
+   - YOLOv5 必须设置 `YOLOv5_AUTOINSTALL=false`，避免运行时自动升级 pip 依赖污染环境。
    - 其次使用当前激活 Python。
    - 若用户允许，可创建 `.venv-edgepilot`。
 
@@ -73,6 +76,16 @@ conda activate yolov8-pose
 ```
 
 如果没有 TensorRT tar 目录，可以先不传 `--tensorrt-dir`；脚本会完成 Python 依赖安装，并在报告中提示 TensorRT/trtexec 缺口。
+
+YOLOv5 使用独立环境：
+
+```bash
+bash edgelite-compression-agent/scripts/setup_yolov5_env.sh \
+  --env-name yolov5-compress \
+  --tensorrt-dir /path/to/TensorRT-8.6.1.6 \
+  --yes
+conda activate yolov5-compress
+```
 
 只检查并生成缺口报告：
 

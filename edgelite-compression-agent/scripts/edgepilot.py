@@ -171,6 +171,22 @@ def local_ultralytics_probe(workspace: Path) -> Dict[str, Any]:
     return run_probe([sys.executable, "-c", code], cwd=yolov8_root)
 
 
+def local_yolov5_probe(workspace: Path) -> Dict[str, Any]:
+    yolov5_root = workspace / "yolov5"
+    if not yolov5_root.exists():
+        return {"ok": False, "error": "yolov5 project not found", "stdout": "", "stderr": ""}
+    code = (
+        "from pathlib import Path\n"
+        "import models.yolo as yolo\n"
+        "import utils.general as general\n"
+        "root = Path.cwd().resolve()\n"
+        "print(Path(yolo.__file__).resolve())\n"
+        "print(Path(general.__file__).resolve())\n"
+        "raise SystemExit(0 if root in Path(yolo.__file__).resolve().parents else 2)\n"
+    )
+    return run_probe([sys.executable, "-c", code], cwd=yolov5_root)
+
+
 def compact_stdout(text: str) -> str:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
@@ -220,6 +236,7 @@ def inspect_environment(workspace: Path) -> Dict[str, Any]:
             "tensorrt": python_module_version("tensorrt"),
             "onnx": python_module_version("onnx"),
             "local_ultralytics": local_ultralytics_probe(workspace),
+            "local_yolov5": local_yolov5_probe(workspace),
         },
         "projects": projects,
     }
@@ -944,6 +961,15 @@ def sh_cd(workspace: Path, project: str) -> str:
     return f'cd "{workspace / project}"'
 
 
+def conda_run(env_name: str, command: str, extra_env: Optional[Dict[str, str]] = None) -> str:
+    prefixes = []
+    for key, value in (extra_env or {}).items():
+        prefixes.append(f"{key}={shlex.quote(value)}")
+    prefixes.append("conda")
+    prefixes.extend(["run", "-n", shlex.quote(env_name)])
+    return " ".join(prefixes) + f" {command}"
+
+
 def build_yolov8_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[str, Any]]:
     rt = req["runtime"]
     out = req["output_dir"]
@@ -1060,6 +1086,10 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
     batch_min = rt["batch_min"]
     batch_max = rt["batch_max"]
     cocodir = req.get("coco_dir", "datasets/coco")
+    env_name = req.get("env_name") or req.get("yolov5_env_name") or "yolov5-compress"
+    v5_env = {"YOLOv5_AUTOINSTALL": "false"}
+    py = lambda command: conda_run(env_name, f"python {command}", v5_env)
+    trt = lambda command: conda_run(env_name, command, v5_env)
 
     return [
         {
@@ -1068,8 +1098,8 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
             "purpose": "Export YOLOv5 to TensorRT FP16 engine.",
             "commands": [
                 sh_cd(workspace, "yolov5"),
-                f"python export.py --weights {model} --include engine --half --dynamic --batch-size {batch} --imgsz {imgsz}",
-                f"python val.py --weights {model.replace('.pt', '.engine')} --data {data} --batch-size {batch} --imgsz {imgsz}",
+                py(f"export.py --weights {model} --include engine --half --dynamic --batch-size {batch} --imgsz {imgsz}"),
+                py(f"val.py --weights {model.replace('.pt', '.engine')} --data {data} --batch-size {batch} --imgsz {imgsz}"),
             ],
         },
         {
@@ -1079,17 +1109,17 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
             "commands": [
                 sh_cd(workspace, "yolov5"),
                 (
-                    "python scripts/qat.py quantize "
+                    py("scripts/qat.py quantize "
                     f"{model} --cocodir {cocodir} --device {rt['device']} "
-                    f"--ptq {out}/ptq.pt --eval-origin --eval-ptq"
+                    f"--ptq {out}/ptq.pt --eval-origin --eval-ptq")
                 ),
-                f"python scripts/qat.py export {out}/ptq.pt --save {out}/ptq.onnx --size {imgsz} --dynamic",
+                py(f"scripts/qat.py export {out}/ptq.pt --save {out}/ptq.onnx --size {imgsz} --dynamic"),
                 (
-                    "trtexec "
+                    trt("trtexec "
                     f"--onnx={out}/ptq.onnx --saveEngine={out}/ptq.engine --int8 --fp16 "
                     f"--minShapes=images:{batch_min}x3x{imgsz}x{imgsz} "
                     f"--optShapes=images:{batch}x3x{imgsz}x{imgsz} "
-                    f"--maxShapes=images:{batch_max}x3x{imgsz}x{imgsz}"
+                    f"--maxShapes=images:{batch_max}x3x{imgsz}x{imgsz}")
                 ),
             ],
         },
@@ -1100,18 +1130,18 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
             "commands": [
                 sh_cd(workspace, "yolov5"),
                 (
-                    "python scripts/qat.py quantize "
+                    py("scripts/qat.py quantize "
                     f"{model} --cocodir {cocodir} --device {rt['device']} "
                     f"--ptq {out}/ptq.pt --qat {out}/qat.pt --iters {req.get('qat_iters', 200)} "
-                    "--eval-origin --eval-ptq"
+                    "--eval-origin --eval-ptq")
                 ),
-                f"python scripts/qat.py export {out}/qat.pt --save {out}/qat.onnx --size {imgsz} --dynamic",
+                py(f"scripts/qat.py export {out}/qat.pt --save {out}/qat.onnx --size {imgsz} --dynamic"),
                 (
-                    "trtexec "
+                    trt("trtexec "
                     f"--onnx={out}/qat.onnx --saveEngine={out}/qat.engine --int8 --fp16 "
                     f"--minShapes=images:{batch_min}x3x{imgsz}x{imgsz} "
                     f"--optShapes=images:{batch}x3x{imgsz}x{imgsz} "
-                    f"--maxShapes=images:{batch_max}x3x{imgsz}x{imgsz}"
+                    f"--maxShapes=images:{batch_max}x3x{imgsz}x{imgsz}")
                 ),
             ],
         },
@@ -1122,16 +1152,16 @@ def build_yolov5_candidates(req: Dict[str, Any], workspace: Path) -> List[Dict[s
             "commands": [
                 sh_cd(workspace, "yolov5"),
                 (
-                    "python detect_after_pruning_finetune.py "
+                    py("detect_after_pruning_finetune.py "
                     f"--weights {model} --data {data} --imgsz {imgsz} --device {rt['device']} "
                     f"--project {out}/prune --name sp0.3 --iterative-steps {req.get('prune_steps', 5)} "
-                    f"--finetune-epochs {req.get('prune_epochs', 30)}"
+                    f"--finetune-epochs {req.get('prune_epochs', 30)}")
                 ),
                 (
-                    "python scripts/qat.py quantize "
+                    py("scripts/qat.py quantize "
                     f"{out}/prune/sp0.3/weights/pruned_finetuned.pt --cocodir {cocodir} "
                     f"--device {rt['device']} --ptq {out}/prune03-ptq.pt --qat {out}/prune03-qat.pt "
-                    f"--iters {req.get('qat_iters', 200)} --eval-ptq"
+                    f"--iters {req.get('qat_iters', 200)} --eval-ptq")
                 ),
             ],
         },
@@ -1262,7 +1292,7 @@ def evaluate_results(request: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def commands_script(plan: Dict[str, Any]) -> str:
-    ld_export = edgepilot_ld_library_export()
+    ld_export = None if plan.get("request", {}).get("project") == "yolov5" else edgepilot_ld_library_export()
     lines = [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
