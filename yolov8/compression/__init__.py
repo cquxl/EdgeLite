@@ -1,3 +1,3 @@
 from .prune import YOLOv8PosePrune
 from .quant import YOLOv8PoseQuant
-from .quant import YOLOv8PoseDataLoader, my_export_onnx
+from .quant import YOLOv8PoseDataLoader, my_export_onnx, safe_empty_cache

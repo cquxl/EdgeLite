@@ -4,7 +4,6 @@ import torch
 import numpy as np
 import tensorrt as trt
 import pycuda.driver as cuda
-import pycuda.autoinit  # 关键 - 正确初始化 CUDA
 from pathlib import Path
 from ultralytics import YOLO
 import subprocess
@@ -172,7 +171,31 @@ class YOLOv8PosePTQ:
         self.weight = weight  # pt file if not None
         self.onnx_path = onnx_path
         self.engine_path = engine_path
-        self.ctx = cuda.Device(0).make_context()
+        self.ctx = None
+
+    def _device_index(self):
+        device = str(getattr(self.args, "device", "cuda:0"))
+        return int(device.split(":", 1)[1]) if device.startswith("cuda:") else 0
+
+    def push_cuda_context(self):
+        if self.ctx is not None:
+            return
+        cuda.init()
+        self.ctx = cuda.Device(self._device_index()).retain_primary_context()
+        self.ctx.push()
+
+    def pop_cuda_context(self):
+        if self.ctx is None:
+            return
+        try:
+            self.ctx.pop()
+        except Exception as exc:
+            self.logger.warning(f"PyCUDA context pop skipped: {exc}")
+        try:
+            self.ctx.detach()
+        except Exception:
+            pass
+        self.ctx = None
 
 
     def initialize_cuda(self):
@@ -186,11 +209,8 @@ class YOLOv8PosePTQ:
                 self.logger.info("错误: 没有找到可用的 CUDA 设备")
                 return False
 
-            # 使用第一个可用的设备
-            device = cuda.Device(0)
-
-            context = device.make_context()
-            context.push()
+            device = cuda.Device(self._device_index())
+            self.push_cuda_context()
 
             # 检查 CUDA 版本
             self.logger.info(f"CUDA 版本: {cuda.get_version()}")
@@ -246,8 +266,7 @@ class YOLOv8PosePTQ:
 
     def build_int8_engine(self):
         self.logger.info("构建 INT8 TensorRT 引擎")
-        if not self.initialize_cuda():
-            return False
+        self.push_cuda_context()
         # 1. 创建 TensorRT 日志记录器
         # TRT_LOGGER = trt.Logger(trt.Logger.WARNING)
         TRT_LOGGER = MyLogger(self.logger)
@@ -301,6 +320,7 @@ class YOLOv8PosePTQ:
 
     def build_with_trtexec(self):
         """备选方案: 使用 trtexec 命令行工具构建引擎"""
+        self.push_cuda_context()
         # self.logger.info("\n尝试使用 trtexec 构建引擎...")
         # 生成校准缓存
         trt_cache_path = os.path.join(self.args.cache_dir, 'trt_calibration.cache')
@@ -335,7 +355,6 @@ class YOLOv8PosePTQ:
             else:
                 self.logger.info(f"引擎已存在: {self.engine_path}, pleas eval on coco-pose")
         finally:
-            self.ctx.pop()
+            self.pop_cuda_context()
     def __del__(self):
-        if self.ctx:
-            self.ctx.pop()
+        self.pop_cuda_context()

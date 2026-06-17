@@ -1,8 +1,18 @@
-from .ptq import YOLOv8PosePTQ
+from .ptq.ptq_quant import YOLOv8PosePTQ
 from .qat import YOLOv8PoseQAT
 from .qat import YOLOv8PoseDataLoader
 from .qat import my_export_onnx
 import torch
+
+
+def safe_empty_cache(logger=None):
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as exc:
+        if logger:
+            logger.warning(f"torch.cuda.empty_cache skipped: {exc}")
+
 
 class YOLOv8PoseQuant:
     def __init__(self, args, yolo_cfg):
@@ -22,7 +32,7 @@ class YOLOv8PoseQuant:
             self.logger.info("PTQ quantization start and build engine")
             self.Quant.build_engine()
             del self.Quant
-            torch.cuda.empty_cache()
+            safe_empty_cache(self.logger)
 
         elif self.args.quant == "qat":
             self.logger.info("QAT quantization start and finetune")

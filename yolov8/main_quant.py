@@ -3,7 +3,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from compression import YOLOv8PoseQuant, YOLOv8PoseDataLoader
+from compression import YOLOv8PoseQuant, YOLOv8PoseDataLoader, safe_empty_cache
 from utils import setup_logger, eval_engine
 from cfg import quant_args
 
@@ -44,7 +44,7 @@ def main():
     # if not os.path.exists(args.engine_path):
     quant = YOLOv8PoseQuant(args, yolo_cfg)
     quant.quant()
-    torch.cuda.empty_cache()
+    safe_empty_cache(args.logger)
 
     if args.eval and os.path.exists(args.engine_path):
         if args.quant == 'ptq' and args.export != 'yolo':

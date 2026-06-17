@@ -1,13 +1,21 @@
 import torch.cuda
 
 from .utils import CalibrationDataset, MyLogger, get_int8_calibration_dataloader
-import pycuda.autoinit
 import pycuda.driver as cuda
 import tensorrt as trt
 import os
 from ultralytics import YOLO
 import subprocess
 import sys
+
+
+def safe_empty_cache(logger=None):
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception as exc:
+        if logger:
+            logger.warning(f"torch.cuda.empty_cache skipped: {exc}")
 
 
 
@@ -91,7 +99,31 @@ class YOLOv8PosePTQ:
         self.export = args.export
         self.trt_cache_path = os.path.join(self.args.cache_dir, f'trt_calibration_batch{self.batch}.cache')
         self.logger.info(self.model)
-        self.ctx = cuda.Device(0).make_context()
+        self.ctx = None
+
+    def _device_index(self):
+        device = str(getattr(self.args, "device", "cuda:0"))
+        return int(device.split(":", 1)[1]) if device.startswith("cuda:") else 0
+
+    def push_cuda_context(self):
+        if self.ctx is not None:
+            return
+        cuda.init()
+        self.ctx = cuda.Device(self._device_index()).retain_primary_context()
+        self.ctx.push()
+
+    def pop_cuda_context(self):
+        if self.ctx is None:
+            return
+        try:
+            self.ctx.pop()
+        except Exception as exc:
+            self.logger.warning(f"PyCUDA context pop skipped: {exc}")
+        try:
+            self.ctx.detach()
+        except Exception:
+            pass
+        self.ctx = None
 
     # def initialize_cuda(self):
     #     """initialize CUDA"""
@@ -178,6 +210,7 @@ class YOLOv8PosePTQ:
 
     def build_int8_engine(self):
         self.logger.info("build int8 engine")
+        self.push_cuda_context()
         # if not self.initialize_cuda():
         #     return False
         # 1. create logger
@@ -235,18 +268,19 @@ class YOLOv8PosePTQ:
             f.write(serialized_engine)
         self.logger.info(f"build engine success: {self.engine_path}")
         del calibrator, serialized_engine
-        torch.cuda.empty_cache()
+        safe_empty_cache(self.logger)
         return True
 
 
     def build_with_trtexec(self):
         """build engine with trtexec"""
+        self.push_cuda_context()
         # 1. prepare trt cache
         trt_cache_path = os.path.join(self.args.cache_dir, f'trt_calibration_batch{self.batch}.cache')
         if not os.path.exists(trt_cache_path):
             calibrator = self.load_trt_calibrator()
             del calibrator
-            torch.cuda.empty_cache()
+            safe_empty_cache(self.logger)
         self.logger.info(f"export int8 engine by trtexec")
         subprocess.run([
             "trtexec",
@@ -267,6 +301,7 @@ class YOLOv8PosePTQ:
         return os.path.exists(self.engine_path)
 
     def build_engine(self):
+        success = False
         try:
             if not os.path.exists(self.engine_path):
                 if self.export == 'yolo':
@@ -275,22 +310,13 @@ class YOLOv8PosePTQ:
                     success = self.build_int8_engine()
                 elif self.export == 'trtexec':
                     success = self.build_with_trtexec()
-                self.ctx.pop()
                 if not success:
                     self.logger.info("build engine failed!")
-                    self.ctx.pop()
                     sys.exit(1)
             else:
                 self.logger.info(f"engine exists: {self.engine_path}, pleas eval on coco-pose")
-                self.ctx.pop()
         finally:
-            pass
-            try:
-                ctx = cuda.Context.get_current()
-                if ctx:
-                    ctx.pop()
-            except:
-                pass
+            self.pop_cuda_context()
     # def __del__(self):
     #     if self.ctx :
     #         self.ctx.pop()
